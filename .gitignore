@@ -1,0 +1,7 @@
+# NVC work library and simulation output
+work/
+*.fst
+*.vcd
+
+# macOS
+.DS_Store

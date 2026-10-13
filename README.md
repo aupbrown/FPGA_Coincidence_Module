@@ -46,7 +46,6 @@ Run every command below from the repository root.
 | `src/pulse_gen.vhd` | Synthesizable trapezoidal pulse generator (ADC stand-in) |
 | `src/debouncer.vhd` | Two-flop synchronizer, debounce, rising-edge detect |
 | `constraints/board_top.xdc` | Pin, I/O voltage and clock constraints for `board_top` |
-| `src/and_gate.vhd`, `src/full_adder.vhd`, `src/counter.vhd` | Early practice designs |
 | `sim/tb_*.vhd` | Testbenches (see below) |
 
 ### Board behaviour
@@ -137,9 +136,6 @@ The other testbenches have free-running clocks, so give them a stop time:
 | `sim/tb_detector_top.vhd` | `src/trigger.vhd src/coincidence.vhd src/detector_top.vhd` | `tb_detector_top` | No: expect `coinc_out` in cases 1, 4, 6 only |
 | `sim/tb_trigger.vhd` | `src/trigger.vhd` | `tb_trigger` | No: expect two 22-clock `trig_out` pulses |
 | `sim/tb_pulse_generator.vhd` | `src/pulse_gen.vhd` | `tb_pulse_gen` | No: inspect waveform |
-| `sim/tb_counter.vhd` | `src/counter.vhd` | `tb_counter` | No |
-| `sim/tb_full_adder.vhd` | `src/full_adder.vhd` | `tb_FullAdder` | No |
-| `sim/tb_and_gate.vhd` | `src/and_gate.vhd` | `tb_and_gate` | No |
 
 ```sh
 nvc -a src/trigger.vhd sim/tb_trigger.vhd && nvc -e tb_trigger

@@ -10,8 +10,9 @@
 -- so led(0) produces distinct pulses instead of sitting solid the way it will
 -- on hardware.
 --
--- Run:  nvc -a debouncer.vhd pulse_gen.vhd trigger.vhd coincidence.vhd \
---              detector_top.vhd board_top.vhd tb_board_top.vhd
+-- Run from the repository root:
+--       nvc -a src/debouncer.vhd src/pulse_gen.vhd src/trigger.vhd src/coincidence.vhd \
+--              src/detector_top.vhd src/board_top.vhd sim/tb_board_top.vhd
 --       nvc -e tb_board_top
 --       nvc -r tb_board_top --wave=tb_board_top.fst
 --       surfer tb_board_top.fst

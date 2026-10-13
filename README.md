@@ -34,17 +34,20 @@ free-running counter ──▶ led(3) heartbeat
 
 ### Files
 
+`src/` holds the design, `sim/` the testbenches, `constraints/` the Vivado XDC.
+Run every command below from the repository root.
+
 | File | Contents |
 |---|---|
-| `board_top.vhd` | Top level: pulse generators, detector, debouncer, pattern menu, LED stretcher, heartbeat |
-| `detector_top.vhd` | 4 × `trigger` + 1 × `coincidence` |
-| `trigger.vhd` | Per-channel triangular filter and trigger FSM |
-| `coincidence.vhd` | Registered exact-match comparator, `trig_ins = user_pattern` |
-| `pulse_gen.vhd` | Synthesizable trapezoidal pulse generator (ADC stand-in) |
-| `debouncer.vhd` | Two-flop synchronizer, debounce, rising-edge detect |
-| `board_top.xdc` | Pin, I/O voltage and clock constraints for `board_top` |
-| `and_gate.vhd`, `full_adder.vhd`, `counter.vhd` | Early practice designs |
-| `tb_*.vhd` | Testbenches (see below) |
+| `src/board_top.vhd` | Top level: pulse generators, detector, debouncer, pattern menu, LED stretcher, heartbeat |
+| `src/detector_top.vhd` | 4 × `trigger` + 1 × `coincidence` |
+| `src/trigger.vhd` | Per-channel triangular filter and trigger FSM |
+| `src/coincidence.vhd` | Registered exact-match comparator, `trig_ins = user_pattern` |
+| `src/pulse_gen.vhd` | Synthesizable trapezoidal pulse generator (ADC stand-in) |
+| `src/debouncer.vhd` | Two-flop synchronizer, debounce, rising-edge detect |
+| `constraints/board_top.xdc` | Pin, I/O voltage and clock constraints for `board_top` |
+| `src/and_gate.vhd`, `src/full_adder.vhd`, `src/counter.vhd` | Early practice designs |
+| `sim/tb_*.vhd` | Testbenches (see below) |
 
 ### Board behaviour
 
@@ -98,8 +101,8 @@ project. All design files (not testbenches) must avoid them:
 Check with:
 
 ```sh
-nvc --std=1993 -a debouncer.vhd pulse_gen.vhd trigger.vhd coincidence.vhd \
-       detector_top.vhd board_top.vhd
+nvc --std=1993 -a src/debouncer.vhd src/pulse_gen.vhd src/trigger.vhd \
+       src/coincidence.vhd src/detector_top.vhd src/board_top.vhd
 ```
 
 ## Simulation
@@ -107,8 +110,8 @@ nvc --std=1993 -a debouncer.vhd pulse_gen.vhd trigger.vhd coincidence.vhd \
 Full board design:
 
 ```sh
-nvc -a debouncer.vhd pulse_gen.vhd trigger.vhd coincidence.vhd \
-       detector_top.vhd board_top.vhd tb_board_top.vhd
+nvc -a src/debouncer.vhd src/pulse_gen.vhd src/trigger.vhd src/coincidence.vhd \
+       src/detector_top.vhd src/board_top.vhd sim/tb_board_top.vhd
 nvc -e tb_board_top
 nvc -r tb_board_top --wave=tb_board_top.fst --dump-arrays
 surfer tb_board_top.fst
@@ -130,16 +133,16 @@ The other testbenches have free-running clocks, so give them a stop time:
 
 | Testbench | Analyze | Top | Self-checking? |
 |---|---|---|---|
-| `tb_board_top.vhd` | see above | `tb_board_top` | Yes (assertions) |
-| `tb_detector_top.vhd` | `trigger.vhd coincidence.vhd detector_top.vhd` | `tb_detector_top` | No: expect `coinc_out` in cases 1, 4, 6 only |
-| `tb_trigger.vhd` | `trigger.vhd` | `tb_trigger` | No: expect two 22-clock `trig_out` pulses |
-| `tb_pulse_generator.vhd` | `pulse_gen.vhd` | `tb_pulse_gen` | No: inspect waveform |
-| `tb_counter.vhd` | `counter.vhd` | `tb_counter` | No |
-| `tb_full_adder.vhd` | `full_adder.vhd` | `tb_FullAdder` | No |
-| `tb_and_gate.vhd` | `and_gate.vhd` | `tb_and_gate` | No |
+| `sim/tb_board_top.vhd` | see above | `tb_board_top` | Yes (assertions) |
+| `sim/tb_detector_top.vhd` | `src/trigger.vhd src/coincidence.vhd src/detector_top.vhd` | `tb_detector_top` | No: expect `coinc_out` in cases 1, 4, 6 only |
+| `sim/tb_trigger.vhd` | `src/trigger.vhd` | `tb_trigger` | No: expect two 22-clock `trig_out` pulses |
+| `sim/tb_pulse_generator.vhd` | `src/pulse_gen.vhd` | `tb_pulse_gen` | No: inspect waveform |
+| `sim/tb_counter.vhd` | `src/counter.vhd` | `tb_counter` | No |
+| `sim/tb_full_adder.vhd` | `src/full_adder.vhd` | `tb_FullAdder` | No |
+| `sim/tb_and_gate.vhd` | `src/and_gate.vhd` | `tb_and_gate` | No |
 
 ```sh
-nvc -a trigger.vhd tb_trigger.vhd && nvc -e tb_trigger
+nvc -a src/trigger.vhd sim/tb_trigger.vhd && nvc -e tb_trigger
 nvc -r tb_trigger --stop-time=2us --wave=tb_trigger.fst
 ```
 

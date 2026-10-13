@@ -5,3 +5,10 @@ work/
 
 # macOS
 .DS_Store
+
+# Vivado build output
+build/
+.Xil/
+vivado*.jou
+vivado*.log
+vivado*.str

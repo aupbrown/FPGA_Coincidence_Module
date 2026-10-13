@@ -13,14 +13,17 @@
 #
 # The heartbeat is kept on a 3.3 V LED because it is the first thing to check
 # at bring-up. The LED in Bank 35 carries a pattern bit and may look dimmer.
+#
+# There is no clock pin. Avnet's master XDC lists a PL_CLK on Y18 (JX3.73), but
+# a bring-up bitstream showed no clock there on this carrier, so the design
+# runs on the PS's FCLK_CLK0 instead (see src/board_top.vhd).
 # ----------------------------------------------------------------------------
 
-# --- Clock input -------------------------------------------------------------
-set_property PACKAGE_PIN Y18  [get_ports {clk}];       # PL_CLK,  JX3.73, Bank 13
-set_property IOSTANDARD LVCMOS33 [get_ports {clk}];
-
-# 33.333 MHz on-board oscillator -> 30 ns period
-create_clock -period 30.000 -name sys_clk [get_ports {clk}];
+# --- Clock -------------------------------------------------------------------
+# FCLK_CLK0 from the PS7 block, set by Linux to 33.333 MHz (IO PLL 1000 MHz
+# / 30) -> 30 ns period. The PS7 IP's own XDC (which would define this clock)
+# is disabled in build.tcl.
+create_clock -period 30.000 -name clk_fpga_0 [get_pins -hierarchical {*PS7_i/FCLKCLK[0]}];
 
 # --- Push button -------------------------------------------------------------
 set_property PACKAGE_PIN T16  [get_ports {btn}];       # PL_PB2,  JX2.100, Bank 13
@@ -37,7 +40,7 @@ set_property IOSTANDARD LVCMOS18 [get_ports {led[2]}];
 
 # --- Asynchronous I/O --------------------------------------------------------
 # The button is pressed by a human and the LEDs are watched by one; neither has
-# any timing relationship to sys_clk, so exclude them from timing analysis.
+# any timing relationship to clk_fpga_0, so exclude them from timing analysis.
 # The debouncer's two-flop synchronizer handles the button's asynchrony.
 set_false_path -from [get_ports {btn}];
 set_false_path -to   [get_ports {led[*]}];

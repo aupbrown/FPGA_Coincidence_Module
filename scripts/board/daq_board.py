@@ -22,10 +22,15 @@ Files written by run/dump (the format model/compare.py reads):
     counters.csv   name,value  -- run_clocks and every counter
     hist_ch0..3.csv  bin,count -- 4096 bins each
 """
-import mmap
 import os
 import sys
 import time
+
+try:
+    import mmap
+except ImportError:          # Avnet's image ships python3 without the mmap module
+    mmap = None
+    import ctypes
 
 BASE = 0x43C00000
 SIZE = 0x20000
@@ -76,15 +81,31 @@ class Core(object):
         if not os.path.exists("/tmp/board_top.loaded"):
             fail("board_top is not loaded (no /tmp/board_top.loaded). Run load_board_top.sh first.")
         fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
-        self.mm = mmap.mmap(fd, SIZE, mmap.MAP_SHARED,
-                            mmap.PROT_READ | mmap.PROT_WRITE, offset=BASE)
+        # Either way, indexing self.words does one aligned 32-bit access, i.e.
+        # exactly one AXI transaction per register.
+        if mmap is not None:
+            self.mm = mmap.mmap(fd, SIZE, mmap.MAP_SHARED,
+                                mmap.PROT_READ | mmap.PROT_WRITE, offset=BASE)
+            self.words = memoryview(self.mm).cast("I")
+        else:
+            self.words = self._libc_mmap(fd)
         os.close(fd)
-        # Indexing a memoryview cast to 'I' does one aligned 32-bit access,
-        # i.e. exactly one AXI transaction per register.
-        self.words = memoryview(self.mm).cast("I")
         ident = self.rd(REG["id"])
         if ident != ID_VALUE:
             fail("ID register is 0x%08X, expected 0x%08X" % (ident, ID_VALUE))
+
+    @staticmethod
+    def _libc_mmap(fd):
+        """mmap() from libc through ctypes; returns a ctypes array over the mapping."""
+        PROT_READ, PROT_WRITE, MAP_SHARED = 1, 2, 1
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.mmap.restype = ctypes.c_void_p
+        libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
+                              ctypes.c_int, ctypes.c_int, ctypes.c_long]
+        addr = libc.mmap(None, SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, BASE)
+        if addr is None or addr == ctypes.c_void_p(-1).value:
+            fail("mmap of /dev/mem failed: " + os.strerror(ctypes.get_errno()))
+        return (ctypes.c_uint32 * (SIZE // 4)).from_address(addr)
 
     def rd(self, offset):
         return self.words[offset >> 2]

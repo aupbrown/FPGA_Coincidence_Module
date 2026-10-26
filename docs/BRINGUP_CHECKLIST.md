@@ -59,10 +59,17 @@ In that root shell (before quitting screen), check once:
 ```sh
 ls -l /dev/mem                  # must exist
 which devmem python3            # both must exist
-python3 --version               # expect 3.5.x on Avnet's 2017.4 image
+python3 --version               # expect 3.5.x on Avnet's 2017.4 image (no mmap module: see below)
 ```
 If `python3` is missing, the board-side readout needs rewriting as a shell script around
 `devmem`: tell me. If `devmem` is missing, `load_board_top.sh` stops before touching the bus.
+
+Avnet's 2017.4 image ships Python 3.5.2 **without the `mmap` module** (`import mmap` fails
+with `ImportError: No module named 'mmap'`). `daq_board.py` handles this: when `mmap` is
+missing it calls libc's `mmap()` through `ctypes` instead, which gives the same `/dev/mem`
+mapping and still one 32-bit AXI access per register. Nothing to do here, but if
+`daq.py status` ever shows that traceback, the board has an old copy of `daq_board.py`:
+`daq.py` re-sends it on every call, so check you are on the current branch.
 
 ## 3. Load set 1
 

@@ -15,6 +15,7 @@ entity detector_top is
         threshold_3 : in std_logic_vector(15 downto 0);
         trig_width : in  std_logic_vector(15 downto 0);
         user_pattern : in std_logic_vector(3 downto 0);
+        trig_out : out std_logic_vector(3 downto 0);  -- each channel's trigger, for energy capture
         coinc_out : out std_logic );
 end detector_top;
 
@@ -88,5 +89,7 @@ begin
         coinc_out => coinc_out,
         reset => reset,
         trig_ins => trig_bus);
+
+    trig_out <= trig_bus;
 
 end behavior;

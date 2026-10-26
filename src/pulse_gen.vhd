@@ -2,20 +2,37 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
--- Trapezoidal pulse generator: idles at BASE (baseline/pedestal),
--- ramps up, holds, ramps back down to the baseline, repeats.
--- adc_out = BASE + pulse_level, saturated at full scale.
+-- Detector pulse generator: a stand-in for a charge-sensitive preamp + ADC.
+--
+-- Each pulse injects a charge AMP_i over RISE_CYCLES clocks, and the output
+-- decays exponentially the whole time, like an RC circuit:
+--
+--     level <= level - ceil(level / 2**DECAY_SHIFT) + (INC_i while rising)
+--
+-- so the tail falls by a factor alpha = 1 - 2**-DECAY_SHIFT per clock
+-- (tau ~ 2**DECAY_SHIFT clocks). Because charge leaks away during the rise too,
+-- the peak is a little below AMP_i -- but the trap filter measures the injected
+-- charge, so its flat top is K * AMP_i.
+--
+-- level is fixed point with FRAC fraction bits, so the decay is smooth even at
+-- small levels. Rounding the decay UP (ceil) means the level always reaches
+-- exactly 0 before the next pulse: every pulse of the same amplitude is then
+-- bit-identical, which makes the expected histogram exact.
+--
+-- The generator cycles through AMP_0 .. AMP_(NUM_AMPS-1), one per pulse.
+-- adc_out = BASE + integer part of level, saturated at full scale.
 entity pulse_gen is
     generic (
-        -- do not know if these are meaningful values. Need to derive meaningful values properly in the future.
-        BASE : integer := 100; -- signal baseline
-        data_width : integer := 12;
-        increment : integer := 100;
-        decrement : integer := 50;
-        idle_cycles : integer := 200;
-        up_cycles : integer := 20;
-        hold_cycles : integer := 10;
-        down_cycles : integer := 40;
+        BASE        : integer := 100;  -- signal baseline
+        data_width  : integer := 12;
+        NUM_AMPS    : integer := 1;    -- 1 to 4
+        AMP_0       : integer := 2000; -- charge of each pulse, in ADC counts
+        AMP_1       : integer := 0;
+        AMP_2       : integer := 0;
+        AMP_3       : integer := 0;
+        RISE_CYCLES : integer := 20;
+        DECAY_SHIFT : integer := 5;    -- alpha = 1 - 2**-5 = 31/32
+        PERIOD      : integer := 512;  -- clocks from one pulse start to the next
         START_DELAY : integer := 0
         );
 
@@ -27,17 +44,28 @@ entity pulse_gen is
 end pulse_gen;
 
 architecture behavior of pulse_gen is
-    type state_t is (WAIT_START_S, IDLE_S, RAMP_UP_S, RAMP_DOWN_S, HOLD_S);
+    constant FRAC : integer := 8;                  -- fraction bits of level
+    constant LW   : integer := data_width + 1 + FRAC;  -- one spare integer bit for pile-up
+
+    -- Charge added per rising clock, in fixed point. Integer division here is
+    -- done once, at elaboration; it costs no hardware.
+    type inc_array is array (0 to 3) of integer;
+    constant INC : inc_array := ((AMP_0 * 2**FRAC) / RISE_CYCLES,
+                                 (AMP_1 * 2**FRAC) / RISE_CYCLES,
+                                 (AMP_2 * 2**FRAC) / RISE_CYCLES,
+                                 (AMP_3 * 2**FRAC) / RISE_CYCLES);
+
+    type state_t is (WAIT_START_S, RISE_S, DECAY_S);
     signal state, next_state : state_t := WAIT_START_S;
 
-    signal count_int : unsigned(11 downto 0) := (others => '0');
+    signal count_int : unsigned(15 downto 0) := (others => '0');
     signal count_en, count_reset : std_logic := '0';
-    signal wait_start_done, idle_count_done, up_count_done, hold_count_done, down_count_done : std_logic := '0';
+    signal wait_start_done, rise_done, decay_done : std_logic := '0';
 
-    -- pulse height above the baseline (registered)
-    signal level : unsigned(data_width-1 downto 0) := (others => '0');
-    -- one extra bit to detect overflow when adding BASE
-    signal sum   : unsigned(data_width downto 0);
+    signal amp_index : integer range 0 to 3 := 0;
+    signal level     : unsigned(LW-1 downto 0) := (others => '0');
+    signal decay     : unsigned(LW-1 downto 0);
+    signal sum       : unsigned(data_width+1 downto 0);
 begin
 
     -- State register
@@ -53,91 +81,60 @@ begin
     end process;
 
     -- Next-state / control logic (purely combinational)
-    comb: process (state, wait_start_done, idle_count_done, up_count_done, hold_count_done, down_count_done)
+    comb: process (state, wait_start_done, rise_done, decay_done)
     begin
         next_state  <= state;
-        count_en    <= '0';
+        count_en    <= '1';
         count_reset <= '0';
 
         case state is
             when WAIT_START_S =>
-                count_en <= '1';
                 if wait_start_done = '1' then
                     count_reset <= '1';
-                    next_state <= IDLE_S;
-                end if;
-            when IDLE_S =>
-                count_en <= '1';
-                if idle_count_done = '1' then
-                    count_reset <= '1';
-                    next_state  <= RAMP_UP_S;
-                else
-                    next_state <= IDLE_S;
+                    next_state  <= RISE_S;
                 end if;
 
-            when RAMP_UP_S =>
-                count_en <= '1';
-                if up_count_done = '1' then
+            when RISE_S =>
+                if rise_done = '1' then
                     count_reset <= '1';
-                    next_state  <= HOLD_S;
-                else
-                    next_state <= RAMP_UP_S;
+                    next_state  <= DECAY_S;
                 end if;
 
-            when HOLD_S =>
-                count_en <= '1';
-                if hold_count_done = '1' then
+            when DECAY_S =>
+                if decay_done = '1' then
                     count_reset <= '1';
-                    next_state  <= RAMP_DOWN_S;
-                else
-                    next_state <= HOLD_S;
+                    next_state  <= RISE_S;
                 end if;
-
-            when RAMP_DOWN_S =>
-                count_en <= '1';
-                if down_count_done = '1' then
-                    count_reset <= '1';
-                    next_state  <= IDLE_S;
-                else
-                    next_state <= RAMP_DOWN_S;
-                end if;
-
-            when others =>
-                next_state <= IDLE_S;
         end case;
     end process;
 
-    -- Pulse amplitude register (relative to baseline)
+    -- ceil(level / 2**DECAY_SHIFT): add 2**DECAY_SHIFT - 1 before shifting.
+    decay <= shift_right(level + to_unsigned(2**DECAY_SHIFT - 1, LW), DECAY_SHIFT);
+
+    -- Pulse level (relative to baseline) and which amplitude comes next
     amp: process (clock)
     begin
         if rising_edge(clock) then
             if reset = '1' then
-                level <= (others => '0');
+                level     <= (others => '0');
+                amp_index <= 0;
             else
                 case state is
                     when WAIT_START_S =>
                         level <= (others => '0');
 
-                    when IDLE_S =>
-                        level <= (others => '0');
-
-                    when RAMP_UP_S =>
-                    -- 2^(data_width bits) - 1 = max value data register can hold. If we are about to go over, we need to clamp instead of overflowing
-                        if level < to_unsigned(2**data_width - 1 - increment, data_width) then
-                            level <= level + to_unsigned(increment, data_width);
-                        else
-                            level <= (others => '1');
+                    when RISE_S =>
+                        level <= level - decay + to_unsigned(INC(amp_index), LW);
+                        if rise_done = '1' then
+                            if amp_index = NUM_AMPS - 1 then
+                                amp_index <= 0;
+                            else
+                                amp_index <= amp_index + 1;
+                            end if;
                         end if;
 
-                    when RAMP_DOWN_S =>
-                        if level > to_unsigned(decrement, data_width) then
-                            level <= level - to_unsigned(decrement, data_width);
-                        else
-                            level <= (others => '0');
-                        end if;
-
-                    when others =>
-                        null;
+                    when DECAY_S =>
+                        level <= level - decay;
                 end case;
             end if;
         end if;
@@ -146,7 +143,7 @@ begin
     counter: process (clock)
     begin
         if rising_edge(clock) then
-            if count_reset = '1' then
+            if count_reset = '1' or reset = '1' then
                 count_int <= (others => '0');
             elsif count_en = '1' then
                 count_int <= count_int + 1;
@@ -155,13 +152,12 @@ begin
     end process;
 
     wait_start_done <= '1' when count_int >= START_DELAY else '0';
-    up_count_done <= '1' when count_int >= up_cycles - 1  else '0';
-    hold_count_done <= '1' when count_int >= hold_cycles - 1 else '0';
-    down_count_done <= '1' when count_int >= down_cycles - 1 else '0';
-    idle_count_done <= '1' when count_int >= idle_cycles - 1 else '0';
+    rise_done       <= '1' when count_int >= RISE_CYCLES - 1 else '0';
+    decay_done      <= '1' when count_int >= PERIOD - RISE_CYCLES - 1 else '0';
 
-    -- Output = baseline + pulse, saturated at full scale
-    sum <= resize(level, data_width+1) + to_unsigned(BASE, data_width+1); -- extra bit is for detecting overflow
-    adc_out <= (others => '1') when sum(data_width) = '1' else std_logic_vector(sum(data_width-1 downto 0));
+    -- Output = baseline + integer part of the level, saturated at full scale
+    sum <= resize(level(LW-1 downto FRAC), data_width+2) + to_unsigned(BASE, data_width+2);
+    adc_out <= (others => '1') when sum > to_unsigned(2**data_width - 1, data_width+2)
+               else std_logic_vector(sum(data_width-1 downto 0));
 
 end behavior;

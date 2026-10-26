@@ -20,6 +20,7 @@ architecture sim of tb_detector_top is
                threshold_3  : in  std_logic_vector(15 downto 0);
                trig_width   : in  std_logic_vector(15 downto 0);
                user_pattern : in  std_logic_vector(3 downto 0);
+               trig_out     : out std_logic_vector(3 downto 0);
                coinc_out    : out std_logic );
     end component;
 
@@ -55,6 +56,7 @@ begin
                    threshold_3  => thresh(3),
                    trig_width   => sig_tw,
                    user_pattern => sig_pattern,
+                   trig_out     => open,
                    coinc_out    => sig_coinc );
 
     clk_gen: process

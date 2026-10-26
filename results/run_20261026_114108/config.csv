@@ -1,0 +1,11 @@
+name,value
+id,0x454E0001
+config,0x05382002
+conv_gain,5
+user_pattern,15
+trig_width,39
+baseline,100
+threshold_0,1250
+threshold_1,1250
+threshold_2,1250
+threshold_3,1250

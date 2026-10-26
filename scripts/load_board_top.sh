@@ -13,6 +13,8 @@
 #   2. Set FCLK_CLK0, board_top's clock, to 33.333 MHz and enable it. The rate
 #      and enable live in the PS, not in the bitstream, and reset at reboot.
 #   3. Write the bitstream to /dev/xdevcfg and check that DONE went high.
+#   4. Make sure the PS-PL AXI path is open (level shifters on, PL reset
+#      released), then read core_top's ID register at 0x43C0_0000.
 #
 # Avnet's design reloads from BOOT.BIN at every boot, so run this after each
 # reboot.
@@ -54,7 +56,37 @@ echo 1 > $FCLK/enable
 echo "FCLK_CLK0 = $RATE Hz, enabled"
 
 # --- 3. Load -----------------------------------------------------------------
+rm -f /tmp/board_top.loaded               # stale marker from an earlier load
 echo 0 > $DEVCFG/is_partial_bitstream
 cat "$BIT" > /dev/xdevcfg || fail "write to /dev/xdevcfg failed"
 [ "$(cat $DEVCFG/prog_done)" = "1" ] || fail "DONE did not go high"
 echo "loaded $BIT: DONE = 1"
+
+# --- 4. PS-PL AXI path -------------------------------------------------------
+# An AXI read from the PS waits forever for a reply. If the PL cannot answer
+# (level shifters off, or the PL held in reset), Linux freezes. So check both
+# before the first read. SLCR registers (Zynq TRM, ug585):
+#   0xF8000008 SLCR_UNLOCK   write 0xDF0D to allow SLCR writes
+#   0xF8000240 FPGA_RST_CTRL bit 0 = FCLK_RESET0 asserted: must be 0
+#   0xF8000900 LVL_SHFTR_EN  0xF = all PS<->PL level shifters enabled
+command -v devmem >/dev/null || fail "no devmem on this image; cannot check the AXI path"
+SLCR_UNLOCK=0xF8000008
+FPGA_RST_CTRL=0xF8000240
+LVL_SHFTR_EN=0xF8000900
+CORE_ID=0x43C00000
+ID_VALUE=0x454E0001
+
+lvl=$(devmem $LVL_SHFTR_EN)
+rstc=$(devmem $FPGA_RST_CTRL)
+echo "LVL_SHFTR_EN = $lvl, FPGA_RST_CTRL = $rstc"
+if [ $((lvl & 0xF)) -ne 15 ] || [ $((rstc & 0xF)) -ne 0 ]; then
+    echo "enabling level shifters and releasing PL resets"
+    devmem $SLCR_UNLOCK 32 0xDF0D
+    devmem $LVL_SHFTR_EN 32 0xF
+    devmem $FPGA_RST_CTRL 32 0
+fi
+
+id=$(devmem $CORE_ID)
+[ $((id)) -eq $((ID_VALUE)) ] || fail "core_top ID is $id, expected $ID_VALUE"
+echo "core_top ID = $id"
+md5sum "$BIT" > /tmp/board_top.loaded    # daq_board.py checks this before touching the bus

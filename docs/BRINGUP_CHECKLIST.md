@@ -6,16 +6,15 @@ depend on earlier ones.
 
 Already verified on the Mac, without hardware (`sh scripts/run_sims.sh`): VHDL-93
 analysis, three unit testbenches that match the Python model sample for sample, and two
-full-system runs through the AXI port, both PASS against the model. **Not yet
-verified:** the Vivado block design and build, the PS→PL AXI path on the real board, and
-the board-side scripts on PetaLinux's Python 3.5.
+full-system runs through the AXI port, both PASS against the model. **Verified on
+hardware 2026-10-26:** every step below passed (37 runs, all PASS; see `results/README.md`).
 
 ---
 
 ## 0. On the Vivado PC (about 2 minutes)
 
 ```sh
-cd FPGA_practice                # the repository root; run every command from here
+cd FPGA_Coincidence_Module      # the repository root (or wherever you cloned it); run every command from here
 python3 --version               # host needs >= 3.9 (model uses math.lcm)
 sh scripts/run_sims.sh          # optional if nvc is installed: everything should end in PASS
 python3 -m model.expected --set 1   # write these predictions down before you build

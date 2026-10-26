@@ -143,8 +143,9 @@ design files (not testbenches) must avoid them:
 
 ## Known issues and open items
 
-- **Untested on hardware:** the block design Tcl, the AXI path, and the board scripts on Python 3.5.
-  The bring-up checklist lists the likely failure points.
+- **Verified on hardware** (2026-10-26): both pulse sets, run-time settings and sweeps, 37 runs, all
+  PASS against the model. Runs and settings: `results/README.md`. Avnet's Python 3.5.2 has no
+  `mmap` module; `daq_board.py` falls back to libc `mmap()` through `ctypes`.
 - **The ADC format is an assumption** (unsigned). Confirm against the real ADC.
 - **Baseline must be exact.** An error of 1 count shifts every energy by K·L/2^M = 56 (≈ 2 bins at gain 5).
   A real detector needs a baseline-restoration stage; here the baseline is a register.

@@ -12,6 +12,8 @@ may hold the port. Run from the repository root:
     python3 scripts/daq.py set pattern 0b0111          # coincidence pattern
     python3 scripts/daq.py set gain 4                  # conversion gain
     python3 scripts/daq.py set baseline 100
+    python3 scripts/daq.py set polarity 0b0010         # invert ch1 (negative pulses)
+    python3 scripts/daq.py set trap_m 13               # trap pole-zero: tau ~ 2**13 clocks
     python3 scripts/daq.py run --seconds 10            # acquire, fetch, compare
     python3 scripts/daq.py sweep-threshold 3 100 300 500 700 900 --seconds 1
 
@@ -126,7 +128,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     p = sub.add_parser("set")
-    p.add_argument("name", choices=["threshold", "trig_width", "pattern", "gain", "baseline"])
+    p.add_argument("name", choices=["threshold", "trig_width", "pattern", "gain", "baseline",
+                                    "polarity", "trap_m"])
     p.add_argument("value")
     p.add_argument("--ch", type=int, choices=range(4))
     p = sub.add_parser("run")

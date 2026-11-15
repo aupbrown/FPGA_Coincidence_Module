@@ -7,7 +7,8 @@ serial console, but it also works by hand:
 
     python3 daq_board.py status
     python3 daq_board.py set threshold 1500 [CH]    # CH omitted = all four
-    python3 daq_board.py set trig_width 60          # also: pattern, gain, baseline
+    python3 daq_board.py set trig_width 60          # also: pattern, gain, baseline,
+                                                    #       polarity, trap_m
     python3 daq_board.py run SECONDS OUTDIR         # clear, run, stop, dump
     python3 daq_board.py dump OUTDIR
     python3 daq_board.py start | stop | clear
@@ -34,7 +35,7 @@ except ImportError:          # Avnet's image ships python3 without the mmap modu
 
 BASE = 0x43C00000
 SIZE = 0x20000
-ID_VALUE = 0x454E0001
+ID_VALUE = 0x454E0002
 CLOCK_HZ = 33333333
 MAX_SECONDS = 120          # RUN_CLOCKS is 32 bits: wraps after 128.8 s
 
@@ -42,7 +43,7 @@ REG = {
     "id": 0x000, "config": 0x004, "control": 0x008, "status": 0x00C,
     "uptime": 0x010, "run_clocks": 0x014, "conv_gain": 0x018,
     "user_pattern": 0x01C, "trig_width": 0x020, "coinc_count": 0x024,
-    "baseline": 0x028,
+    "baseline": 0x028, "polarity": 0x080, "trap_m": 0x084,
 }
 for _ch in range(4):
     REG["threshold_%d" % _ch] = 0x030 + 4 * _ch
@@ -53,8 +54,9 @@ for _ch in range(4):
 
 # Short names accepted by "set"
 SETTABLE = {"threshold": "threshold_%d", "trig_width": "trig_width",
-            "pattern": "user_pattern", "gain": "conv_gain", "baseline": "baseline"}
-CONFIG_NAMES = (["conv_gain", "user_pattern", "trig_width", "baseline"] +
+            "pattern": "user_pattern", "gain": "conv_gain", "baseline": "baseline",
+            "polarity": "polarity", "trap_m": "trap_m"}
+CONFIG_NAMES = (["conv_gain", "user_pattern", "trig_width", "baseline", "polarity", "trap_m"] +
                 ["threshold_%d" % ch for ch in range(4)])
 COUNTER_NAMES = ["run_clocks", "coinc_count"] + [
     "%s_%d" % (n, ch) for ch in range(4)

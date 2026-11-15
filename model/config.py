@@ -10,12 +10,13 @@ FRAC = 8            # pulse_gen fraction bits
 
 K = 32              # trap peaking time, clocks
 L = 56              # trap K + flat top, clocks
-TRAP_M = 5          # decay shift: alpha = 1 - 2**-5
+TRAP_M = 5          # reset value of the TRAP_M register (and pulse_gen's decay): alpha = 1 - 2**-5
 WINDOW = L + 16     # energy_capture window
 TRIG_FILTER_WIDTH = 10
 
 CLOCK_HZ = 33_333_333
-ID_VALUE = 0x454E0001
+ID_VALUE = 0x454E0002
+ID_V1 = 0x454E0001  # before POLARITY/TRAP_M: results/ runs up to 2026-10-26
 REG_BASE = 0x43C00000
 
 # One dict per channel: num_amps, amps, rise, period, delay
@@ -40,9 +41,11 @@ DEFAULT_REGS = dict(
     trig_width=50,
     threshold=[1250, 1250, 1250, 1250],
     baseline=100,
+    polarity=0b0000,
+    trap_m=TRAP_M,
 )
 
 
-def config_word(pulse_set):
-    """Value of the CONFIG register for this build."""
-    return pulse_set | (K << 8) | (L << 16) | (TRAP_M << 24)
+def config_word(pulse_set, trap_m=TRAP_M):
+    """Value of the CONFIG register for this build and TRAP_M register value."""
+    return pulse_set | (K << 8) | (L << 16) | (trap_m << 24)

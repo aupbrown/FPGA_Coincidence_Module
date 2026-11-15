@@ -37,9 +37,12 @@ def read_hist(path):
 
 
 def regs_from_config(cfg):
+    # polarity and trap_m are missing from runs made before ID v2: reset values.
     return dict(conv_gain=cfg["conv_gain"], user_pattern=cfg["user_pattern"],
                 trig_width=cfg["trig_width"], baseline=cfg["baseline"],
-                threshold=[cfg[f"threshold_{ch}"] for ch in range(4)])
+                threshold=[cfg[f"threshold_{ch}"] for ch in range(4)],
+                polarity=cfg.get("polarity", C.DEFAULT_REGS["polarity"]),
+                trap_m=cfg.get("trap_m", C.DEFAULT_REGS["trap_m"]))
 
 
 def compare(run_dir, out=print):
@@ -55,15 +58,15 @@ def compare(run_dir, out=print):
             failures.append(msg)
 
     pulse_set = cfg["config"] & 0xFF
-    check(cfg["id"] == C.ID_VALUE, f"ID 0x{cfg['id']:08X} (expect 0x{C.ID_VALUE:08X})")
-    check(pulse_set in C.PULSE_SETS and cfg["config"] == C.config_word(pulse_set),
+    regs = regs_from_config(cfg)
+    check(cfg["id"] in (C.ID_VALUE, C.ID_V1), f"ID 0x{cfg['id']:08X} (expect 0x{C.ID_VALUE:08X})")
+    check(pulse_set in C.PULSE_SETS and cfg["config"] == C.config_word(pulse_set, regs["trap_m"]),
           f"CONFIG 0x{cfg['config']:08X}: pulse set {pulse_set}, K {cfg['config'] >> 8 & 0xFF}, "
           f"L {cfg['config'] >> 16 & 0xFF}, M {cfg['config'] >> 24} "
-          f"(model: K {C.K}, L {C.L}, M {C.TRAP_M})")
+          f"(model: K {C.K}, L {C.L}, M {regs['trap_m']})")
     if failures:
         return False
 
-    regs = regs_from_config(cfg)
     pred = predict(pulse_set, regs)
     sp = pred["super_period"]
     periods = cnt["run_clocks"] / sp

@@ -80,7 +80,7 @@ Expect, at the end:
 FCLK_CLK0 = 33333333 Hz, enabled
 loaded /tmp/board_top.bit.bin: DONE = 1
 LVL_SHFTR_EN = 0x0000000F, FPGA_RST_CTRL = 0x00000000
-core_top ID = 0x454E0001
+core_top ID = 0x454E0002
 ```
 - `LVL_SHFTR_EN` or `FPGA_RST_CTRL` showing other values is fine: the script prints
   "enabling level shifters and releasing PL resets" and fixes them.
@@ -171,6 +171,45 @@ crosses threshold before ch0's small ones, so ch1's window closes first and brie
 only ch0. With identical pulses (the old design) that couldn't happen.
 
 You can check any of these by hand first: `python3 -m model.expected --pattern 0b0111 --trig-width 39`.
+
+## 7. Replay Max's CZT waveforms (the ADC stand-in)
+
+On the PC, once (needs h5py + numpy): `python3 scripts/make_replay.py` writes
+`replay/photopeak/d00..d25.bin` (100 events each) and `replay/random/d00..d25.bin` (175).
+Uploads run at about 5 KB/s over the console: ~45 s per photopeak file, ~75 s per random file.
+They are skipped when the board already has the file, and they're gone after a reboot.
+
+Every replay run is checked **bin for bin** against `model/replay.py`, so the pass line is
+exact. The numbers below are what the model predicts with `daq.py replay`'s defaults
+(TRAP_M 13, POLARITY 0010, BASELINE 200, thresholds 250, gain 5).
+
+1. Smoke test, one depth:
+   ```sh
+   python3 scripts/daq.py replay replay/photopeak/d12.bin
+   ```
+   ch0 (anode): 100 events, median bin 897. ch1 (cathode): 100 events, median 302.
+   Coincidences (0011): 100. ch2/ch3: nothing.
+2. Depth scan (one result folder per depth; ~20 min of uploads the first time):
+   ```sh
+   python3 scripts/daq.py replay replay/photopeak/d*.bin --per-file
+   ```
+   The anode median stays at 845–904. The cathode median climbs with depth: 113 (d00), 133 (d05),
+   252 (d10), 445 (d15), 624 (d20), 850 (d25). At d00–d04, 3–9 cathode pulses stay
+   under threshold 250 (shallow events have small, slow cathode signals).
+3. Natural spectrum, all depths pooled (~35 min of uploads the first time):
+   ```sh
+   python3 scripts/daq.py replay replay/random/d*.bin
+   ```
+   ch0: 4369 events, photopeak near bin 900 on a Compton continuum. ch1: 3184.
+   Coincidences: 3134.
+4. Regression: `python3 scripts/daq.py set source 0`, then `daq.py run --seconds 10`.
+   That still PASSes against the pulse-set model (replay leaves TRAP_M at 13, so first
+   `set trap_m 5` and `set baseline 100`, or reload the bitstream).
+
+If a replay run FAILs, `model.compare` lists the bins that differ. A difference in only a
+few bins, with the counters right, points at timing around the play start/end (see
+`src/replay_source.vhd`). Everything off points at a setting: compare `config.csv` with
+the command-line defaults.
 
 ## When done
 

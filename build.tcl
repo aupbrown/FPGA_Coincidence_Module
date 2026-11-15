@@ -28,7 +28,8 @@ create_project -in_memory -part $part
 #
 # core_top's slave only speaks AXI4-Lite (single 32-bit transfers, no IDs or
 # bursts); the converter turns the PS's AXI3 transactions into that. M_AXI is
-# mapped at 0x43C0_0000, 128 KB. FCLK_CLK0's rate is set at run time by Linux;
+# mapped at 0x43C0_0000, 1 MB (registers, histograms, and the replay buffer
+# at +0x8_0000). FCLK_CLK0's rate is set at run time by Linux;
 # the 33.333 MHz here only has to match the XDC.
 create_bd_design -dir $outdir/bd ps7_stub
 set ps7 [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 ps7]
@@ -73,7 +74,7 @@ create_bd_port -dir O -from 0 -to 0 -type rst PL_RESETN
 connect_bd_net [get_bd_pins rst/peripheral_aresetn] [get_bd_ports PL_RESETN]
 
 assign_bd_address -target_address_space [get_bd_addr_spaces ps7/Data] \
-    -offset 0x43C00000 -range 128K [get_bd_addr_segs M_AXI/Reg]
+    -offset 0x43C00000 -range 1M [get_bd_addr_segs M_AXI/Reg]
 
 validate_bd_design
 save_bd_design
@@ -90,6 +91,7 @@ add_files [make_wrapper -files $bd_file -top]
 read_vhdl {
     src/pulse_config_pkg.vhd
     src/pulse_gen.vhd
+    src/replay_source.vhd
     src/trigger.vhd
     src/coincidence.vhd
     src/detector_top.vhd

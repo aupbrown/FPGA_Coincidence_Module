@@ -26,6 +26,7 @@ by how long the PS takes to stop the run).
 """
 import argparse
 import array
+import math
 import os
 import sys
 
@@ -33,6 +34,8 @@ from . import config as C
 from .dsp import EnergyCapture, TrapFilter, Trigger
 
 BUFFER_WORDS = 1 << 17
+ANODE_OFFSET = 200      # as in scripts/make_replay.py
+CATHODE_OFFSET = 3895
 
 # Settings for Max's CZT data, as packed by scripts/make_replay.py.
 # trap_m 13: the preamp decays with tau ~ 8300 samples (2**13 = 8192).
@@ -57,6 +60,61 @@ def read_words(path):
     if sys.byteorder == "big":
         words.byteswap()
     return list(words)
+
+
+def synthetic_events(events, seed=1):
+    """Replay words for CZT-like events, standard library only (for the testbench).
+
+    events: list of (anode, cathode, pileup) amplitudes in ADU, where pileup is
+    None or (delay, anode, cathode) for a second pulse on top of the first.
+    Each event is 512 samples like scripts/make_replay.py's: 160 baseline
+    samples, then the edge. Anode positive (rise 10), cathode negative (rise
+    30), tau 8300 samples, approximately Gaussian noise of sigma ~ 18.
+    """
+    x = seed
+
+    def noise():
+        nonlocal x
+        total = 0
+        for _ in range(4):
+            x = (1103515245 * x + 12345) % 2 ** 31
+            total += x
+        return (total >> 26) - 64
+
+    def pulse(n, amp, rise):
+        if n < 0:
+            return 0.0
+        return amp * min(n / rise, 1.0) * math.exp(-n / 8300.0)
+
+    words = []
+    for anode, cathode, pile in events:
+        for n in range(512):
+            a = pulse(n - 160, anode, 10)
+            c = pulse(n - 160, cathode, 30)
+            if pile:
+                a += pulse(n - 160 - pile[0], pile[1], 10)
+                c += pulse(n - 160 - pile[0], pile[2], 30)
+            la = min(max(round(a) + noise() + ANODE_OFFSET, 0), 4095)
+            lb = min(max(-round(c) + noise() + CATHODE_OFFSET, 0), 4095)
+            words.append(la | lb << 16)
+    return words
+
+
+# Two "files" for sim/tb_replay.vhd: photopeak-, Compton- and noise-like events,
+# one pile-up, and one anode-only event.
+VECTOR_FILES = {
+    "replay_a.txt": [(900, 300, None), (450, 800, None), (1500, 120, None),
+                     (0, 0, None), (700, 500, (40, 300, 200)), (150, 0, None)],
+    "replay_b.txt": [(880, 650, None), (300, 250, None), (1617, 860, None), (950, 330, None)],
+}
+
+
+def write_vectors(outdir="sim/vectors"):
+    os.makedirs(outdir, exist_ok=True)
+    for i, (name, events) in enumerate(sorted(VECTOR_FILES.items())):
+        with open(os.path.join(outdir, name), "w") as f:
+            f.write("".join("%d\n" % w for w in synthetic_events(events, seed=i + 1)))
+    print("wrote %s/%s" % (outdir, " and ".join(sorted(VECTOR_FILES))))
 
 
 def settle_clocks(regs):

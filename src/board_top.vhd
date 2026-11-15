@@ -65,7 +65,7 @@ component core_top is
              TRAP_M    : integer);
     Port (aclk          : in  std_logic;
           aresetn       : in  std_logic;
-          s_axi_awaddr  : in  std_logic_vector(16 downto 0);
+          s_axi_awaddr  : in  std_logic_vector(19 downto 0);
           s_axi_awvalid : in  std_logic;
           s_axi_awready : out std_logic;
           s_axi_wdata   : in  std_logic_vector(31 downto 0);
@@ -75,7 +75,7 @@ component core_top is
           s_axi_bresp   : out std_logic_vector(1 downto 0);
           s_axi_bvalid  : out std_logic;
           s_axi_bready  : in  std_logic;
-          s_axi_araddr  : in  std_logic_vector(16 downto 0);
+          s_axi_araddr  : in  std_logic_vector(19 downto 0);
           s_axi_arvalid : in  std_logic;
           s_axi_arready : out std_logic;
           s_axi_rdata   : out std_logic_vector(31 downto 0);
@@ -109,13 +109,13 @@ begin
                    M_AXI_wstrb   => wstrb,
                    M_AXI_wvalid  => wvalid );
 
-    -- The 128 KB window is decoded by the PS (the block design assigns it), so
-    -- only the low 17 address bits reach core_top.
+    -- The 1 MB window is decoded by the PS (the block design assigns it), so
+    -- only the low 20 address bits reach core_top.
     core: core_top
         generic map ( PULSE_SET => PULSE_SET, K => 32, L => 56, TRAP_M => 5 )
         port map ( aclk          => clk,
                    aresetn       => resetn(0),
-                   s_axi_awaddr  => awaddr(16 downto 0),
+                   s_axi_awaddr  => awaddr(19 downto 0),
                    s_axi_awvalid => awvalid,
                    s_axi_awready => awready,
                    s_axi_wdata   => wdata,
@@ -125,7 +125,7 @@ begin
                    s_axi_bresp   => bresp,
                    s_axi_bvalid  => bvalid,
                    s_axi_bready  => bready,
-                   s_axi_araddr  => araddr(16 downto 0),
+                   s_axi_araddr  => araddr(19 downto 0),
                    s_axi_arvalid => arvalid,
                    s_axi_arready => arready,
                    s_axi_rdata   => rdata,

@@ -11,12 +11,14 @@ Run from the repository root:
     python3 -m model.expected --set 1
     python3 -m model.expected --threshold 3 600 --gain 4
     python3 -m model.expected --vectors       # write sim/vectors/*.txt for the testbenches
+                                              # (including the replay vectors, model/replay.py)
 """
 import argparse
 import math
 import os
 
 from . import config as C
+from . import replay
 from .dsp import Core, PulseGen, TrapFilter
 
 
@@ -91,6 +93,7 @@ def write_vectors(outdir="sim/vectors", n=3000):
             gen.step()
             f.write(f"{x} {trap.out()}\n")
     print(f"wrote {outdir}/pulse_gen.txt and {outdir}/trap_filter.txt ({n} rows each)")
+    replay.write_vectors(outdir)
 
 
 def main():

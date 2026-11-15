@@ -7,9 +7,10 @@ use work.pulse_config_pkg.all;
 -- and coincidence logic, the energy chain and histograms, and the AXI4-Lite
 -- register map through which the PS controls and reads it all.
 --
---   pulse_gen x4 --> polarity --adc--> detector_top (trigger x4 + coincidence) --coinc--> counter
---                                |                     | trig(ch)
---                                +--> trap_filter --> energy_capture --> histogram (one per channel)
+--   pulse_gen x4 ---+
+--                   +--> source mux --> polarity --adc--> detector_top (trigger x4 + coincidence) --coinc--> counter
+--   replay_source --+                         |                     | trig(ch)
+--   (ch0, ch1)                                +--> trap_filter --> energy_capture --> histogram (one per channel)
 --
 -- Register map (byte offsets from the AXI base, 0x43C0_0000 on the board).
 -- RO = read only, RW = read/write. Defaults are the reset values.
@@ -18,7 +19,8 @@ use work.pulse_config_pkg.all;
 --   0x008 CONTROL      RW  bit 0 run. bit 1 clear: write 1 to zero the histograms
 --                          and every counter and reset the trap filters
 --                          (self-clearing, reads 0)
---   0x00C STATUS       RO  bit 0 run, bit 1 clear in progress
+--   0x00C STATUS       RO  bit 0 run, bit 1 clear in progress,
+--                          bit 2 replay playing, bit 3 replay done
 --   0x010 UPTIME       RO  clocks since reset (wraps every 129 s)
 --   0x014 RUN_CLOCKS   RO  clocks spent with run = 1 since the last clear
 --   0x018 CONV_GAIN    RW  [3:0] bin = energy >> CONV_GAIN.            Default 5
@@ -27,6 +29,8 @@ use work.pulse_config_pkg.all;
 --   0x024 COINC_COUNT  RO  coincidences (rising edges) while running
 --   0x028 BASELINE     RW  [11:0] ADC baseline subtracted before the trap
 --                          filters. Default 100. Clear after changing it.
+--   0x02C SOURCE       RW  bit 0 = 1: ch0/ch1 take replay lanes A/B, ch2/ch3
+--                          a constant BASELINE (silent). Default 0 = pulse_gen
 --   0x030 + 4*ch THRESHOLD_ch RW [15:0] signed trigger threshold.     Default 1250
 --   0x040 + 16*ch      RO  +0 TRIG_COUNT, +4 EVENT_COUNT (binned),
 --                          +8 OVER_COUNT (over range), +C PILEUP_COUNT
@@ -36,7 +40,16 @@ use work.pulse_config_pkg.all;
 --   0x084 TRAP_M       RW  [3:0] trap pole-zero shift M: alpha = 1 - 2**-M,
 --                          tau ~ 2**M clocks. Default TRAP_M generic (5, which
 --                          matches pulse_gen). Clear after changing it.
+--   0x088 REPLAY_LEN   RW  [17:0] words to play, 1 .. 131072
 --   0x1_0000 + 0x4000*ch + 4*bin  RO  histogram ch, bins 0..4095
+--   0x8_0000 + 4*i     RW  replay buffer word i, 0 .. 131071
+--                          ([11:0] lane A, [27:16] lane B)
+--
+-- Replay (SOURCE = 1): the PS loads the buffer and REPLAY_LEN while stopped,
+-- then sets run. On run's rising edge the buffer plays once, one word per
+-- clock; then STATUS.done is set and the player outputs word 0. While SOURCE
+-- = 1 and nothing is playing, the trap filters are held in reset, so every
+-- play starts from the same state however long the PS took in between.
 entity core_top is
     Generic (PULSE_SET : integer := 2;
              K         : integer := 32;
@@ -44,7 +57,7 @@ entity core_top is
              TRAP_M    : integer := 5);
     Port (aclk          : in  std_logic;
           aresetn       : in  std_logic;
-          s_axi_awaddr  : in  std_logic_vector(16 downto 0);
+          s_axi_awaddr  : in  std_logic_vector(19 downto 0);
           s_axi_awvalid : in  std_logic;
           s_axi_awready : out std_logic;
           s_axi_wdata   : in  std_logic_vector(31 downto 0);
@@ -54,7 +67,7 @@ entity core_top is
           s_axi_bresp   : out std_logic_vector(1 downto 0);
           s_axi_bvalid  : out std_logic;
           s_axi_bready  : in  std_logic;
-          s_axi_araddr  : in  std_logic_vector(16 downto 0);
+          s_axi_araddr  : in  std_logic_vector(19 downto 0);
           s_axi_arvalid : in  std_logic;
           s_axi_arready : out std_logic;
           s_axi_rdata   : out std_logic_vector(31 downto 0);
@@ -83,6 +96,7 @@ type thresh_array is array (0 to 3) of std_logic_vector(15 downto 0);
 signal rst : std_logic;
 
 signal gen_adc      : adc_array;    -- pulse_gen outputs
+signal src_adc      : adc_array;    -- after the source mux
 signal adc          : adc_array;    -- after the polarity stage
 signal trap         : trap_array;
 signal energy       : energy_array;
@@ -107,19 +121,30 @@ signal threshold    : thresh_array := (others => std_logic_vector(to_signed(1250
 signal baseline     : std_logic_vector(11 downto 0) := std_logic_vector(to_unsigned(100, 12));
 signal polarity     : std_logic_vector(3 downto 0)  := "0000";
 signal trap_m_reg   : std_logic_vector(3 downto 0)  := std_logic_vector(to_unsigned(TRAP_M, 4));
+signal source       : std_logic := '0';
+signal replay_len   : unsigned(17 downto 0) := (others => '0');
 signal trap_reset   : std_logic;
+
+-- Replay
+signal run_d          : std_logic := '0';
+signal replay_start   : std_logic;
+signal replay_wr      : std_logic;
+signal replay_sample  : std_logic_vector(31 downto 0);
+signal replay_rd_data : std_logic_vector(31 downto 0);
+signal replay_playing, replay_done : std_logic;
 
 signal uptime, run_clocks, coinc_count : unsigned(31 downto 0) := (others => '0');
 signal trig_count, pileup_count        : count_array := (others => (others => '0'));
 
 -- Register bus from the AXI slave
 signal wr_en : std_logic;
-signal wr_addr, rd_addr : std_logic_vector(16 downto 0);
+signal wr_addr, rd_addr : std_logic_vector(19 downto 0);
 signal wr_data, rd_data : std_logic_vector(31 downto 0);
 signal wr_strb : std_logic_vector(3 downto 0);
 
 signal reg_rd   : std_logic_vector(31 downto 0) := (others => '0');
 signal hist_sel : std_logic := '0';
+signal rep_sel  : std_logic := '0';
 signal hist_ch  : integer range 0 to 3 := 0;
 
 -- Byte-wise write: keep the bytes of old whose strobe bit is 0.
@@ -138,7 +163,7 @@ end function;
 begin
 
     rst <= not aresetn;
-    trap_reset <= rst or clear_pulse;
+    trap_reset <= rst or clear_pulse or (source and not replay_playing);
 
     -- -----------------------------------------------------------------------
     -- Signal chain
@@ -159,6 +184,32 @@ begin
                   trig_out     => trig,
                   coinc_out    => coinc);
 
+    -- -----------------------------------------------------------------------
+    -- Replay buffer: the PS writes it at 0x8_0000, it plays on run's rising edge
+    -- -----------------------------------------------------------------------
+    replay_start <= run and not run_d and source;
+    replay_wr    <= wr_en and wr_addr(19);
+
+    replay: entity work.replay_source
+        generic map (ADDR_WIDTH => 17)
+        port map (clock   => aclk,
+                  reset   => rst,
+                  wr_en   => replay_wr,
+                  wr_addr => wr_addr(18 downto 2),
+                  wr_data => wr_data,
+                  rd_addr => rd_addr(18 downto 2),
+                  rd_data => replay_rd_data,
+                  start   => replay_start,
+                  len     => replay_len,
+                  sample  => replay_sample,
+                  playing => replay_playing,
+                  done    => replay_done);
+
+    src_adc(0) <= replay_sample(11 downto 0)  when source = '1' else gen_adc(0);
+    src_adc(1) <= replay_sample(27 downto 16) when source = '1' else gen_adc(1);
+    src_adc(2) <= baseline                    when source = '1' else gen_adc(2);
+    src_adc(3) <= baseline                    when source = '1' else gen_adc(3);
+
     channels: for ch in 0 to 3 generate
 
         pulse_i: entity work.pulse_gen
@@ -175,7 +226,7 @@ begin
             port map (clock => aclk, reset => rst, adc_out => gen_adc(ch));
 
         -- 4095 - x is the bitwise complement of a 12-bit sample
-        adc(ch) <= not gen_adc(ch) when polarity(ch) = '1' else gen_adc(ch);
+        adc(ch) <= not src_adc(ch) when polarity(ch) = '1' else src_adc(ch);
 
         trap_i: entity work.trap_filter
             generic map (data_width => 12, K => K, L => L, ACC_WIDTH => 32)
@@ -219,6 +270,7 @@ begin
         if rising_edge(aclk) then
             trig_d  <= trig;
             coinc_d <= coinc;
+            run_d   <= run;
             if rst = '1' then
                 uptime <= (others => '0');
             else
@@ -251,7 +303,7 @@ begin
     -- AXI4-Lite slave and register map
     -- -----------------------------------------------------------------------
     axi: entity work.axi_lite_slave
-        generic map (ADDR_WIDTH => 17, READ_LATENCY => 2)
+        generic map (ADDR_WIDTH => 20, READ_LATENCY => 2)
         port map (aclk    => aclk,          aresetn => aresetn,
                   awaddr  => s_axi_awaddr,  awvalid => s_axi_awvalid, awready => s_axi_awready,
                   wdata   => s_axi_wdata,   wstrb   => s_axi_wstrb,
@@ -278,7 +330,9 @@ begin
                 baseline     <= std_logic_vector(to_unsigned(100, 12));
                 polarity     <= "0000";
                 trap_m_reg   <= std_logic_vector(to_unsigned(TRAP_M, 4));
-            elsif wr_en = '1' and wr_addr(16) = '0' then
+                source       <= '0';
+                replay_len   <= (others => '0');
+            elsif wr_en = '1' and wr_addr(19 downto 16) = "0000" then
                 word := to_integer(unsigned(wr_addr(15 downto 2)));
                 case word is
                     when 16#008#/4 =>
@@ -297,6 +351,9 @@ begin
                     when 16#028#/4 =>
                         v := apply_strb(x"00000" & baseline, wr_data, wr_strb);
                         baseline <= v(11 downto 0);
+                    when 16#02C#/4 =>
+                        v := apply_strb(x"0000000" & "000" & source, wr_data, wr_strb);
+                        source <= v(0);
                     when 16#030#/4 to 16#03C#/4 =>
                         v := apply_strb(x"0000" & threshold(word - 16#030#/4), wr_data, wr_strb);
                         threshold(word - 16#030#/4) <= v(15 downto 0);
@@ -306,6 +363,9 @@ begin
                     when 16#084#/4 =>
                         v := apply_strb(x"0000000" & trap_m_reg, wr_data, wr_strb);
                         trap_m_reg <= v(3 downto 0);
+                    when 16#088#/4 =>
+                        v := apply_strb(std_logic_vector(resize(replay_len, 32)), wr_data, wr_strb);
+                        replay_len <= unsigned(v(17 downto 0));
                     when others =>
                         null;
                 end case;
@@ -314,12 +374,18 @@ begin
     end process;
 
     -- Reads take two clocks: stage 1 picks the register (and the histogram
-    -- RAMs read rd_addr), stage 2 picks register or histogram.
+    -- and replay RAMs read rd_addr), stage 2 picks register, histogram or
+    -- replay buffer.
     reg_read: process (aclk)
         variable word, ch, field : integer;
     begin
         if rising_edge(aclk) then
-            hist_sel <= rd_addr(16);
+            if rd_addr(19 downto 16) = "0001" then
+                hist_sel <= '1';
+            else
+                hist_sel <= '0';
+            end if;
+            rep_sel  <= rd_addr(19);
             hist_ch  <= to_integer(unsigned(rd_addr(15 downto 14)));
 
             word   := to_integer(unsigned(rd_addr(15 downto 2)));
@@ -333,6 +399,8 @@ begin
                 when 16#008#/4 => reg_rd(0) <= run;
                 when 16#00C#/4 => reg_rd(0) <= run;
                                   if clearing /= "0000" then reg_rd(1) <= '1'; end if;
+                                  reg_rd(2) <= replay_playing;
+                                  reg_rd(3) <= replay_done;
                 when 16#010#/4 => reg_rd <= std_logic_vector(uptime);
                 when 16#014#/4 => reg_rd <= std_logic_vector(run_clocks);
                 when 16#018#/4 => reg_rd(3 downto 0)  <= conv_gain;
@@ -340,6 +408,7 @@ begin
                 when 16#020#/4 => reg_rd(15 downto 0) <= trig_width;
                 when 16#024#/4 => reg_rd <= std_logic_vector(coinc_count);
                 when 16#028#/4 => reg_rd(11 downto 0) <= baseline;
+                when 16#02C#/4 => reg_rd(0) <= source;
                 when 16#030#/4 to 16#03C#/4 =>
                     reg_rd <= std_logic_vector(resize(signed(threshold(word - 16#030#/4)), 32));
                 when 16#040#/4 to 16#07C#/4 =>
@@ -353,10 +422,13 @@ begin
                     end case;
                 when 16#080#/4 => reg_rd(3 downto 0) <= polarity;
                 when 16#084#/4 => reg_rd(3 downto 0) <= trap_m_reg;
+                when 16#088#/4 => reg_rd(17 downto 0) <= std_logic_vector(replay_len);
                 when others => null;
             end case;
 
-            if hist_sel = '1' then
+            if rep_sel = '1' then
+                rd_data <= replay_rd_data;
+            elsif hist_sel = '1' then
                 rd_data <= hist_rd_data(hist_ch);
             else
                 rd_data <= reg_rd;

@@ -10,6 +10,7 @@ serial console, but it also works by hand:
     python3 daq_board.py set trig_width 60          # also: pattern, gain, baseline,
                                                     #       polarity, trap_m
     python3 daq_board.py run SECONDS OUTDIR         # clear, run, stop, dump
+    python3 daq_board.py replay OUTDIR FILE...      # clear, play each file once, dump
     python3 daq_board.py dump OUTDIR
     python3 daq_board.py start | stop | clear
 
@@ -22,7 +23,17 @@ Files written by run/dump (the format model/compare.py reads):
     config.csv     name,value  -- ID, CONFIG and the run-time settings
     counters.csv   name,value  -- run_clocks and every counter
     hist_ch0..3.csv  bin,count -- 4096 bins each
+replay also writes replay_files.txt, the files it played, in order.
+
+Replay (an ADC stand-in for recorded waveforms, scripts/make_replay.py): sets
+SOURCE = 1 and, for each file, writes its 32-bit words into the PL's replay
+buffer at 0x8_0000 (one AXI write each, then read back and checked), sets
+REPLAY_LEN, starts the run -- the PL plays the buffer once, one word per
+clock -- waits for STATUS.done and stops. The histograms accumulate over all
+the files. Other settings (POLARITY, TRAP_M, thresholds ...) are whatever
+"set" left; scripts/daq.py replay sets the ones Max's data needs.
 """
+import array
 import os
 import sys
 import time
@@ -34,7 +45,7 @@ except ImportError:          # Avnet's image ships python3 without the mmap modu
     import ctypes
 
 BASE = 0x43C00000
-SIZE = 0x20000
+SIZE = 0x100000           # registers, histograms, replay buffer
 ID_VALUE = 0x454E0002
 CLOCK_HZ = 33333333
 MAX_SECONDS = 120          # RUN_CLOCKS is 32 bits: wraps after 128.8 s
@@ -43,7 +54,8 @@ REG = {
     "id": 0x000, "config": 0x004, "control": 0x008, "status": 0x00C,
     "uptime": 0x010, "run_clocks": 0x014, "conv_gain": 0x018,
     "user_pattern": 0x01C, "trig_width": 0x020, "coinc_count": 0x024,
-    "baseline": 0x028, "polarity": 0x080, "trap_m": 0x084,
+    "baseline": 0x028, "source": 0x02C, "polarity": 0x080, "trap_m": 0x084,
+    "replay_len": 0x088,
 }
 for _ch in range(4):
     REG["threshold_%d" % _ch] = 0x030 + 4 * _ch
@@ -55,12 +67,16 @@ for _ch in range(4):
 # Short names accepted by "set"
 SETTABLE = {"threshold": "threshold_%d", "trig_width": "trig_width",
             "pattern": "user_pattern", "gain": "conv_gain", "baseline": "baseline",
-            "polarity": "polarity", "trap_m": "trap_m"}
-CONFIG_NAMES = (["conv_gain", "user_pattern", "trig_width", "baseline", "polarity", "trap_m"] +
+            "polarity": "polarity", "trap_m": "trap_m", "source": "source"}
+CONFIG_NAMES = (["conv_gain", "user_pattern", "trig_width", "baseline", "source", "polarity",
+                 "trap_m"] +
                 ["threshold_%d" % ch for ch in range(4)])
 COUNTER_NAMES = ["run_clocks", "coinc_count"] + [
     "%s_%d" % (n, ch) for ch in range(4)
     for n in ("trig_count", "event_count", "over_count", "pileup_count")]
+
+REPLAY_BASE = 0x80000
+REPLAY_WORDS = 1 << 17
 
 HIST_BASE = 0x10000
 HIST_STRIDE = 0x4000
@@ -69,6 +85,7 @@ BINS = 4096
 CONTROL_RUN = 0x1
 CONTROL_CLEAR = 0x2
 STATUS_CLEARING = 0x2
+STATUS_REPLAY_DONE = 0x8
 
 
 def fail(msg):
@@ -135,6 +152,31 @@ class Core(object):
     def stop(self):
         self.wr(REG["control"], 0)
 
+    def replay_file(self, path):
+        """Load one replay file into the buffer, check it, play it once."""
+        words = array.array("I")
+        with open(path, "rb") as f:
+            words.frombytes(f.read())
+        if not 0 < len(words) <= REPLAY_WORDS:
+            fail("%s: %d words; the replay buffer holds 1-%d" % (path, len(words), REPLAY_WORDS))
+        self.stop()
+        first = REPLAY_BASE >> 2
+        w = self.words
+        for i, v in enumerate(words):             # one 32-bit AXI write per word
+            w[first + i] = v
+        bad = [i for i, v in enumerate(words) if w[first + i] != v]
+        if bad:
+            fail("%s: %d words read back wrong, first at %d" % (path, len(bad), bad[0]))
+        self.wr(REG["replay_len"], len(words))
+        time.sleep(0.01)                          # idle: the filters settle
+        self.start()                              # run's rising edge starts the play
+        deadline = time.time() + 1.0
+        while not self.rd(REG["status"]) & STATUS_REPLAY_DONE:
+            if time.time() > deadline:
+                fail("replay of %s did not finish" % path)
+        time.sleep(0.01)                          # let the last events finish
+        self.stop()
+
     def histogram(self, ch):
         first = (HIST_BASE + HIST_STRIDE * ch) >> 2
         return [self.words[first + b] for b in range(BINS)]
@@ -194,6 +236,8 @@ def main(argv):
     elif cmd == "run":
         if len(args) != 2:
             fail("usage: run SECONDS OUTDIR")
+        if core.get("source"):
+            fail("SOURCE is 1 (replay): use replay, or set source 0 first")
         seconds = float(args[0])
         if not 0 < seconds <= MAX_SECONDS:
             fail("run length must be 0-%d s (RUN_CLOCKS wraps at 128.8 s)" % MAX_SECONDS)
@@ -204,6 +248,18 @@ def main(argv):
         print("ran %.3f s (%d clocks)" % (core.get("run_clocks") / float(CLOCK_HZ),
                                           core.get("run_clocks")))
         core.dump(args[1])
+    elif cmd == "replay":
+        if len(args) < 2:
+            fail("usage: replay OUTDIR FILE...")
+        outdir, paths = args[0], args[1:]
+        core.wr(REG["source"], 1)
+        core.clear()
+        for n, p in enumerate(paths):
+            core.replay_file(p)
+            print("played %s (%d of %d)" % (p, n + 1, len(paths)))
+        core.dump(outdir)
+        with open(os.path.join(outdir, "replay_files.txt"), "w") as f:
+            f.write("".join(p + "\n" for p in paths))
     elif cmd == "dump":
         core.dump(args[0])
     elif cmd == "start":

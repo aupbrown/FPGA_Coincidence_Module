@@ -177,8 +177,11 @@ You can check any of these by hand first: `python3 -m model.expected --pattern 0
 On the PC, once (needs h5py + numpy): `python3 scripts/make_replay.py` writes
 `replay/photopeak/d00_0.bin .. d25_1.bin` (2 parts of 50 whole events per depth) and
 `replay/random/d00_0.bin .. d25_2.bin` (3 parts of 59/58/58). Uploads run at about 5 KB/s
-over the console: ~70 s per part. They are skipped when the board already has the file,
-and they're gone after a reboot.
+over the console: ~50 s per part. They are skipped when the board already has the file,
+and they're gone after a reboot. To skip uploads for good, copy the repo's `replay/` folder
+to the top level of the board's SD card (power off, card into a PC, copy, eject). `daq.py`
+then mounts the card read-only at `/mnt/sd` and plays the files from there (it prints
+"on the SD card"), checking each one's md5 first.
 
 Every replay run is checked **bin for bin** against `model/replay.py`, so the pass line is
 exact. The numbers below are what the model predicts with `daq.py replay`'s defaults

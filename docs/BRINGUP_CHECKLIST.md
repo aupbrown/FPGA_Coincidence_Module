@@ -175,33 +175,36 @@ You can check any of these by hand first: `python3 -m model.expected --pattern 0
 ## 7. Replay Max's CZT waveforms (the ADC stand-in)
 
 On the PC, once (needs h5py + numpy): `python3 scripts/make_replay.py` writes
-`replay/photopeak/d00..d25.bin` (100 events each) and `replay/random/d00..d25.bin` (175).
-Uploads run at about 5 KB/s over the console: ~45 s per photopeak file, ~75 s per random file.
-They are skipped when the board already has the file, and they're gone after a reboot.
+`replay/photopeak/d00_0.bin .. d25_1.bin` (2 parts of 50 whole events per depth) and
+`replay/random/d00_0.bin .. d25_2.bin` (3 parts of 59/58/58). Uploads run at about 5 KB/s
+over the console: ~70 s per part. They are skipped when the board already has the file,
+and they're gone after a reboot.
 
 Every replay run is checked **bin for bin** against `model/replay.py`, so the pass line is
 exact. The numbers below are what the model predicts with `daq.py replay`'s defaults
-(TRAP_M 13, POLARITY 0010, BASELINE 200, thresholds 250, gain 5).
+(TRAP_M 13, POLARITY 0010, BASELINE 200, thresholds 250 on ch0 and 270 on ch1, gain 5).
 
-1. Smoke test, one depth:
+1. Smoke test, one depth (both parts in one run):
    ```sh
-   python3 scripts/daq.py replay replay/photopeak/d12.bin
+   python3 scripts/daq.py replay replay/photopeak/d12_*.bin
    ```
    ch0 (anode): 100 events, median bin 897. ch1 (cathode): 100 events, median 302.
    Coincidences (0011): 100. ch2/ch3: nothing.
-2. Depth scan (one result folder per depth; ~20 min of uploads the first time):
+2. Depth scan (one result folder per depth; ~1 h of uploads the first time):
    ```sh
    python3 scripts/daq.py replay replay/photopeak/d*.bin --per-file
    ```
-   The anode median stays at 845–904. The cathode median climbs with depth: 113 (d00), 133 (d05),
-   252 (d10), 445 (d15), 624 (d20), 850 (d25). At d00–d04, 3–9 cathode pulses stay
-   under threshold 250 (shallow events have small, slow cathode signals).
-3. Natural spectrum, all depths pooled (~35 min of uploads the first time):
+   The anode median climbs gently from 845 (d00) to ~900 (d11 on). The cathode median climbs
+   with depth: 113 (d00), 133 (d05), 252 (d10), 445 (d15), 624 (d20), 850 (d25). At d00–d03,
+   12–14 cathode pulses stay under threshold 270 (2 at d04–d05; shallow events have small,
+   slow cathode signals). A few depths show 101–102 anode events: extra pulses later in the
+   32 µs records or noise triggers, all in the model too.
+3. Natural spectrum, all depths pooled (~1.5 h of uploads the first time, 78 parts):
    ```sh
    python3 scripts/daq.py replay replay/random/d*.bin
    ```
-   ch0: 4369 events, photopeak near bin 900 on a Compton continuum. ch1: 3184.
-   Coincidences: 3134.
+   ch0: 4565 events, photopeak near bin 900 on a Compton continuum (median 394). ch1: 3022.
+   Coincidences: 3003.
 4. Regression: `python3 scripts/daq.py set source 0`, then `daq.py run --seconds 10`.
    That still PASSes against the pulse-set model (replay leaves TRAP_M at 13, so first
    `set trap_m 5` and `set baseline 100`, or reload the bitstream).

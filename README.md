@@ -72,7 +72,7 @@ PS7 M_AXI_GP0 ─AXI3─▶ protocol ─AXI4-Lite─▶ axi_lite_slave ─▶ re
 | `scripts/serial_load.py` | PC: send the bitstream over the serial console and load it |
 | `scripts/load_board_top.sh` | Board: release the PL, set the clock, load, check the AXI path and ID |
 | `scripts/daq.py` | PC: `status`, `set`, `run`, `sweep-threshold`, `upload`, `replay` over the serial console |
-| `scripts/make_replay.py` | PC: Max's `.h5` waveforms → `replay/{photopeak,random}/dNN.bin` (needs h5py, numpy) |
+| `scripts/make_replay.py` | PC: Max's `.h5` waveforms → `replay/{photopeak,random}/dNN_P.bin` (needs h5py, numpy) |
 | `scripts/board/daq_board.py` | Board: register access via `/dev/mem`, writes the result files |
 | `docs/learning/` | How and why everything works |
 | `docs/BRINGUP_CHECKLIST.md` | Step-by-step hardware session with predicted results |
@@ -146,20 +146,27 @@ and playing are split. The PS loads a file into the replay buffer while the run 
 Then the PL plays it once, one word per clock, exactly as an ADC would deliver samples.
 
 ```sh
-python3 scripts/make_replay.py                                  # once: .h5 -> replay/*/dNN.bin
-python3 -m model.replay replay/photopeak/d12.bin                # prediction, no board needed
-python3 scripts/daq.py replay replay/photopeak/d12.bin          # upload, play, fetch, compare
-python3 scripts/daq.py replay replay/photopeak/d*.bin --per-file
+python3 scripts/make_replay.py                                  # once: .h5 -> replay/*/dNN_P.bin
+python3 -m model.replay replay/photopeak/d12_*.bin              # prediction, no board needed
+python3 scripts/daq.py replay replay/photopeak/d12_*.bin        # upload, play, fetch, compare
+python3 scripts/daq.py replay replay/photopeak/d*.bin --per-file   # one run per depth
 python3 scripts/daq.py replay replay/random/d*.bin              # one pooled spectrum
 ```
 
-- **Packing:** each event is cropped to 512 samples (160 before the edge). Anode + 200 goes
+- **Packing:** events are kept whole (1601 samples, the edge at ~640) and concatenated. A
+  depth doesn't fit the 131,072-word buffer in one load, so it is split into parts of whole
+  events, one load each: photopeak `dNN_0/1.bin` (50 + 50 events), random `dNN_0/1/2.bin`
+  (59 + 58 + 58). The parts of a run play one after another into the same histograms;
+  `--per-file` makes one run per depth. Where two records meet, the signal drops from the
+  tail back to baseline; the trap sees that as a negative pulse and is back at 0 long
+  before the next edge, and the trigger only fires on rising signals. Anode + 200 goes
   in lane A. Cathode + 3895 goes in lane B, still negative-going; `POLARITY` bit 1 flips it in the FPGA
   to a baseline of 200. One `BASELINE` (200) then serves both.
 - **Settings** (`daq.py replay` sets them; see `model/replay.py`'s `REPLAY_REGS`):
   `TRAP_M 13`, because the CZT preamp decays with τ ≈ 8,300 samples (2¹³ = 8192). With
-  `TRAP_M 5` the trap never returns to 0. Thresholds 250: the trigger filter peaks at
-  ~2.7 × amplitude with noise σ ≈ 37, and 1250 would cut most of the Compton continuum.
+  `TRAP_M 5` the trap never returns to 0. Thresholds 250 (ch0, anode) and 270 (ch1,
+  cathode): the trigger filter peaks at ~2.6 × amplitude, with noise σ ≈ 38 (anode) and
+  47 (cathode); 1250 would cut most of the Compton continuum.
 - **Exact check:** the trap filters are held in reset between plays. With that, the result
   doesn't depend on Linux's timing, and `model.compare` checks replay runs bin for bin.
 - **Rate:** within a file the data flows at one sample per clock. At 33.3 MHz that is 1.5×

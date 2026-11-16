@@ -189,7 +189,7 @@ class Core:
         self.regs = r
         self.pulses = [PulseGen(**cfg) for cfg in C.PULSE_SETS[pulse_set]]
         self.trigs = [Trigger() for _ in range(4)]
-        self.traps = [TrapFilter() for _ in range(4)]
+        self.traps = [TrapFilter(m=r["trap_m"]) for _ in range(4)]
         self.caps = [EnergyCapture() for _ in range(4)]
         self.coinc = False
         self.reset_counts()
@@ -207,7 +207,8 @@ class Core:
 
     def step(self):
         r = self.regs
-        adc = [p.out() for p in self.pulses]
+        adc = [p.out() ^ 0xFFF if r["polarity"] >> ch & 1 else p.out()
+               for ch, p in enumerate(self.pulses)]
         trig = [t.trig_out for t in self.trigs]
         trap = [f.out() for f in self.traps]
 

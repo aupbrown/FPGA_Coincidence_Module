@@ -28,7 +28,9 @@ class Console:
     def read_for(self, seconds):
         out, end = b"", time.time() + seconds
         while time.time() < end:
-            if select.select([self.fd], [], [], 0.05)[0]:
+            # Never wait past `end`: a fixed 0.05 s here made every 12 ms
+            # pause in send_file last 50 ms (uploads ~4x slower than the line).
+            if select.select([self.fd], [], [], max(0.0, min(0.05, end - time.time())))[0]:
                 try:
                     out += os.read(self.fd, 65536)
                 except BlockingIOError:

@@ -28,9 +28,10 @@ architecture sim of tb_trap_filter is
 begin
 
     uut: entity work.trap_filter
-        generic map (data_width => 12, K => 32, L => 56, DECAY_SHIFT => 5, ACC_WIDTH => 32)
+        generic map (data_width => 12, K => 32, L => 56, ACC_WIDTH => 32)
         port map (clock => clk, reset => '0', adc_in => adc,
-                  baseline => std_logic_vector(to_unsigned(100, 12)), trap_out => trap_out);
+                  baseline => std_logic_vector(to_unsigned(100, 12)),
+                  decay_shift => "0101", trap_out => trap_out);
 
     clk <= not clk after clk_period / 2 when not done;
 

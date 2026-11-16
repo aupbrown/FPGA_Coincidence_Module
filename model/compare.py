@@ -16,13 +16,21 @@ Checks:
     python3 -m model.compare build/sim_out/run_default
     python3 -m model.compare results/run_20261026_120000
 Exit status 0 = PASS, 1 = FAIL.
+
+Replay runs (config.csv has source = 1) are checked against model/replay.py
+instead, exactly: every bin and counter (except run_clocks) must be equal.
+The run directory's replay_files.txt lists the files played, in order, one
+path per line, relative to the repository root.
 """
 import csv
 import os
 import sys
 
 from . import config as C
+from . import replay
 from .expected import predict
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def read_kv(path):
@@ -37,9 +45,12 @@ def read_hist(path):
 
 
 def regs_from_config(cfg):
+    # polarity and trap_m are missing from runs made before ID v2: reset values.
     return dict(conv_gain=cfg["conv_gain"], user_pattern=cfg["user_pattern"],
                 trig_width=cfg["trig_width"], baseline=cfg["baseline"],
-                threshold=[cfg[f"threshold_{ch}"] for ch in range(4)])
+                threshold=[cfg[f"threshold_{ch}"] for ch in range(4)],
+                polarity=cfg.get("polarity", C.DEFAULT_REGS["polarity"]),
+                trap_m=cfg.get("trap_m", C.DEFAULT_REGS["trap_m"]))
 
 
 def compare(run_dir, out=print):
@@ -55,15 +66,18 @@ def compare(run_dir, out=print):
             failures.append(msg)
 
     pulse_set = cfg["config"] & 0xFF
-    check(cfg["id"] == C.ID_VALUE, f"ID 0x{cfg['id']:08X} (expect 0x{C.ID_VALUE:08X})")
-    check(pulse_set in C.PULSE_SETS and cfg["config"] == C.config_word(pulse_set),
+    regs = regs_from_config(cfg)
+    source = cfg.get("source", 0)
+    check(cfg["id"] in (C.ID_VALUE, C.ID_V1), f"ID 0x{cfg['id']:08X} (expect 0x{C.ID_VALUE:08X})")
+    check(pulse_set in C.PULSE_SETS and cfg["config"] == C.config_word(pulse_set, regs["trap_m"]),
           f"CONFIG 0x{cfg['config']:08X}: pulse set {pulse_set}, K {cfg['config'] >> 8 & 0xFF}, "
           f"L {cfg['config'] >> 16 & 0xFF}, M {cfg['config'] >> 24} "
-          f"(model: K {C.K}, L {C.L}, M {C.TRAP_M})")
+          f"(model: K {C.K}, L {C.L}, M {regs['trap_m']})")
     if failures:
         return False
+    if source:
+        return compare_replay(run_dir, regs, cnt, hists, check, failures, out)
 
-    regs = regs_from_config(cfg)
     pred = predict(pulse_set, regs)
     sp = pred["super_period"]
     periods = cnt["run_clocks"] / sp
@@ -91,6 +105,30 @@ def compare(run_dir, out=print):
     out("coincidence")
     near(f"coinc_count (pattern {regs['user_pattern']:04b})", cnt["coinc_count"], pred["coinc_count"])
 
+    out(f"{'PASS' if not failures else 'FAIL'}: {run_dir}")
+    return not failures
+
+
+def compare_replay(run_dir, regs, cnt, hists, check, failures, out):
+    with open(os.path.join(run_dir, "replay_files.txt")) as f:
+        files = [ln.strip() for ln in f if ln.strip()]
+    paths = [p if os.path.isabs(p) else os.path.join(ROOT, p) for p in files]
+    out(f"replay of {len(files)} file(s): {files[0]}{' ...' if len(files) > 1 else ''}")
+    out(f"registers: {regs}")
+    pred = replay.predict(paths, regs)
+    for ch in range(4):
+        out(f"channel {ch}")
+        want, got = pred["hist"][ch], hists[ch]
+        diff = sorted(b for b in set(want) | set(got) if want.get(b, 0) != got.get(b, 0))
+        check(not diff, f"histogram: {sum(got.values())} counts in {len(got)} bins, "
+                        f"{len(diff)} bins differ from the model{' ' + str(diff[:8]) if diff else ''}")
+        for key in ("trig_count", "event_count", "over_count", "pileup_count"):
+            check(cnt[f"{key}_{ch}"] == pred[key][ch],
+                  f"{key}: {cnt[f'{key}_{ch}']} (expect {pred[key][ch]})")
+    out("coincidence")
+    check(cnt["coinc_count"] == pred["coinc_count"],
+          f"coinc_count (pattern {regs['user_pattern']:04b}): {cnt['coinc_count']} "
+          f"(expect {pred['coinc_count']})")
     out(f"{'PASS' if not failures else 'FAIL'}: {run_dir}")
     return not failures
 

@@ -10,6 +10,10 @@ use ieee.numeric_std.all;
 -- height K * A for L - K clocks, and ramps back down to 0. The flat-top height
 -- is the energy measurement. See docs/learning/02_trap_filter.md for the math.
 --
+-- M is the decay_shift input, a run-time register (TRAP_M in core_top), so
+-- the pole-zero can follow the source: 5 for pulse_gen (tau = 32 clocks), 13
+-- for the CZT preamp in Max's data (tau ~ 8300 samples, 2**13 = 8192).
+--
 -- Pipeline, one register per stage (alpha = 1 - 2**-M):
 --   x[n]   = adc_in - baseline                    must be exactly 0 between pulses
 --   d1[n]  = x[n]  - x[n-K]                       first difference, delay K
@@ -23,7 +27,8 @@ use ieee.numeric_std.all;
 -- no rounding. The output appears 5 clocks after the input sample.
 --
 -- Accumulator overflow is harmless: two's-complement wrap-around cancels out as
--- long as the true output fits in ACC_WIDTH bits (K * 4095 * 2**M ~ 2**22 here).
+-- long as acc2 = trap * 2**M fits in ACC_WIDTH bits: K * 4095 * 2**M < 2**31,
+-- i.e. M <= 13 for a full-scale pulse with K = 32 (2**30 at M = 13).
 -- Why subtract the baseline: the pole-zero step treats any lasting offset as
 -- a pulse that never decays. An ADC baseline of B that appears at reset is a
 -- step of B, which leaves a permanent offset of B * K * L / 2**M at the output
@@ -37,13 +42,13 @@ entity trap_filter is
     Generic (data_width  : integer := 12;
              K           : integer := 32;   -- peaking time, clocks
              L           : integer := 56;   -- K + flat-top time, clocks. L > K.
-             DECAY_SHIFT : integer := 5;    -- M: must match the pulse decay
              ACC_WIDTH   : integer := 32);
-    Port (clock    : in  std_logic;
-          reset    : in  std_logic;
-          adc_in   : in  std_logic_vector(data_width-1 downto 0);
-          baseline : in  std_logic_vector(data_width-1 downto 0);
-          trap_out : out signed(ACC_WIDTH-1 downto 0));
+    Port (clock       : in  std_logic;
+          reset       : in  std_logic;
+          adc_in      : in  std_logic_vector(data_width-1 downto 0);
+          baseline    : in  std_logic_vector(data_width-1 downto 0);
+          decay_shift : in  std_logic_vector(3 downto 0);   -- M: must match the pulse decay
+          trap_out    : out signed(ACC_WIDTH-1 downto 0));
 end trap_filter;
 
 architecture behavior of trap_filter is
@@ -62,8 +67,11 @@ signal d1      : signed(data_width+1 downto 0) := (others => '0');   -- 14 bits
 signal d2      : signed(data_width+2 downto 0) := (others => '0');   -- 15 bits
 signal d2_prev : signed(data_width+2 downto 0) := (others => '0');
 signal p, acc1, acc2 : signed(ACC_WIDTH-1 downto 0) := (others => '0');
+signal m             : natural range 0 to 15;
 
 begin
+
+    m <= to_integer(unsigned(decay_shift));
 
     x <= signed(resize(unsigned(adc_in), data_width+1)) -
          signed(resize(unsigned(baseline), data_width+1));
@@ -102,8 +110,8 @@ begin
                 d1      <= resize(x, data_width+2) - resize(x_delay(K), data_width+2);
                 d2      <= resize(d1, data_width+3) - resize(d1_delay(L), data_width+3);
                 d2_prev <= d2;
-                p       <= shift_left(resize(d2, ACC_WIDTH), DECAY_SHIFT)
-                         - shift_left(resize(d2_prev, ACC_WIDTH), DECAY_SHIFT)
+                p       <= shift_left(resize(d2, ACC_WIDTH), m)
+                         - shift_left(resize(d2_prev, ACC_WIDTH), m)
                          + resize(d2_prev, ACC_WIDTH);
                 acc1    <= acc1 + p;
                 acc2    <= acc2 + acc1;
@@ -111,6 +119,6 @@ begin
         end if;
     end process;
 
-    trap_out <= shift_right(acc2, DECAY_SHIFT);
+    trap_out <= shift_right(acc2, m);
 
 end behavior;

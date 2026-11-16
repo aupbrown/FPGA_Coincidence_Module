@@ -30,7 +30,7 @@ architecture sim of tb_core_top is
     signal done    : boolean := false;
     signal aresetn : std_logic := '0';
 
-    signal awaddr, araddr : std_logic_vector(16 downto 0) := (others => '0');
+    signal awaddr, araddr : std_logic_vector(19 downto 0) := (others => '0');
     signal awvalid, wvalid, bready, arvalid, rready : std_logic := '0';
     signal awready, wready, bvalid, arready, rvalid : std_logic;
     signal wdata, rdata : std_logic_vector(31 downto 0) := (others => '0');
@@ -57,7 +57,7 @@ begin
         -- handshake, then take the write response.
         procedure axi_write(addr : integer; data : integer) is
         begin
-            awaddr  <= std_logic_vector(to_unsigned(addr, 17));
+            awaddr  <= std_logic_vector(to_unsigned(addr, 20));
             wdata   <= std_logic_vector(to_signed(data, 32));
             awvalid <= '1';
             wvalid  <= '1';
@@ -73,7 +73,7 @@ begin
         -- One AXI4-Lite read.
         procedure axi_read(addr : integer; data : out std_logic_vector(31 downto 0)) is
         begin
-            araddr  <= std_logic_vector(to_unsigned(addr, 17));
+            araddr  <= std_logic_vector(to_unsigned(addr, 20));
             arvalid <= '1';
             wait until rising_edge(clk) and arready = '1';
             arvalid <= '0';
@@ -120,6 +120,8 @@ begin
             dump_reg(cfg, "user_pattern", 16#01C#, false);
             dump_reg(cfg, "trig_width",   16#020#, false);
             dump_reg(cfg, "baseline",     16#028#, false);
+            dump_reg(cfg, "polarity",     16#080#, false);
+            dump_reg(cfg, "trap_m",       16#084#, false);
             for ch in 0 to 3 loop
                 dump_reg(cfg, "threshold_" & integer'image(ch), 16#030# + 4*ch, true);
             end loop;
@@ -176,7 +178,7 @@ begin
         wait_clocks(5);
 
         axi_read(16#000#, d);
-        assert d = x"454E0001" report "bad ID 0x" & to_hstring(d) severity failure;
+        assert d = x"454E0002" report "bad ID 0x" & to_hstring(d) severity failure;
         axi_read(16#004#, d);
         assert d = x"05382002" report "bad CONFIG 0x" & to_hstring(d) severity failure;
 

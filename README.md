@@ -11,8 +11,13 @@ There are no LEDs or buttons. The PS (Linux) controls everything and reads the r
 the AXI bus, writes them to files, and a host PC drives it all over the USB serial cable.
 The results are checked against a bit-exact Python model of the design.
 
-There is no ADC on the carrier board. Four pulse generators inside the FPGA stand in for
-a detector + preamp: fast rise, exponential decay, a programmable sequence of charges.
+There is no ADC on the carrier board. Two stand-ins feed the channels instead:
+
+- **pulse_gen** (default): four pulse generators inside the FPGA play the part of a
+  detector + preamp, with fast rise, exponential decay, and a programmable sequence of charges.
+- **replay** (`SOURCE = 1`): real CZT waveforms (Max's Cs-137 depth scan,
+  `pulse_data_Austin_v2_175/`) loaded into a 128K-word block RAM by the PS and played into
+  ch0 (anode) and ch1 (cathode) at one sample per clock. See *Replaying recorded waveforms*.
 
 New to the design? Start with `docs/learning/` (the trap filter math, then each module).
 At the board: follow `docs/BRINGUP_CHECKLIST.md`.
@@ -35,8 +40,9 @@ At the board: follow `docs/BRINGUP_CHECKLIST.md`.
 
 ```
                         ┌──────────────── core_top (PL) ────────────────────────────────────┐
-PS7 ─FCLK_CLK0, reset─▶ │ pulse_gen ─adc─▶ trigger ─trig─┬─▶ coincidence ─▶ COINC_COUNT     │
-                        │   (x4)     │       (x4)        │      ▲ user_pattern              │
+PS7 ─FCLK_CLK0, reset─▶ │ pulse_gen ─┬▶ polarity ─adc─▶ trigger ─trig─┬─▶ coincidence ─▶ COINC_COUNT
+                        │ replay ────┘   (x4)     │       (x4)        │      ▲ user_pattern
+                        │ (ch0, ch1)              │                   │
                         │            │                   ▼                                   │
                         │            └─▶ trap_filter ─▶ energy_capture ─▶ histogram (x4)     │
                         │                  ▲ baseline       (peak in window)  ▲ conv_gain   │
@@ -52,6 +58,7 @@ PS7 M_AXI_GP0 ─AXI3─▶ protocol ─AXI4-Lite─▶ axi_lite_slave ─▶ re
 | `src/core_top.vhd` | The four channels, coincidence, counters and the **register map** |
 | `src/pulse_config_pkg.vhd` | Pulse-generator constants: set 1 (original) and set 2 (changed) |
 | `src/pulse_gen.vhd` | Preamp-like pulses: charge injected over `rise` clocks, decay by 1/32 per clock |
+| `src/replay_source.vhd` | Replay buffer: 128K × 32-bit block RAM the PS loads, played once per run at one word per clock |
 | `src/trigger.vhd`, `src/coincidence.vhd`, `src/detector_top.vhd` | Trigger and coincidence (unchanged, except `detector_top` now outputs the trigger bus) |
 | `src/trap_filter.vhd` | Trapezoidal filter with pole-zero correction and baseline subtraction |
 | `src/energy_capture.vhd` | Peak of the trap output in a window after each trigger; pile-up detection |
@@ -59,12 +66,13 @@ PS7 M_AXI_GP0 ─AXI3─▶ protocol ─AXI4-Lite─▶ axi_lite_slave ─▶ re
 | `src/axi_lite_slave.vhd` | AXI4-Lite protocol → simple register bus |
 | `constraints/board_top.xdc` | Clock constraint only |
 | `build.tcl` | Vivado batch build: block design, synthesis, implementation, bitstream, `.bit.bin` |
-| `model/` | Python golden model: `dsp.py` (bit-exact modules), `expected.py` (predictions), `compare.py` (checks a run) |
+| `model/` | Python golden model: `dsp.py` (bit-exact modules), `expected.py` (predictions), `replay.py` (exact predictions for replay runs), `compare.py` (checks a run) |
 | `sim/` | Testbenches; `sim/ps7_stub_wrapper_sim.vhd` stands in for the PS7 |
 | `scripts/run_sims.sh` | Every hardware-free check in one command |
 | `scripts/serial_load.py` | PC: send the bitstream over the serial console and load it |
 | `scripts/load_board_top.sh` | Board: release the PL, set the clock, load, check the AXI path and ID |
-| `scripts/daq.py` | PC: `status`, `set`, `run`, `sweep-threshold` over the serial console |
+| `scripts/daq.py` | PC: `status`, `set`, `run`, `sweep-threshold`, `upload`, `replay` over the serial console |
+| `scripts/make_replay.py` | PC: Max's `.h5` waveforms → `replay/{photopeak,random}/dNN_P.bin` (needs h5py, numpy) |
 | `scripts/board/daq_board.py` | Board: register access via `/dev/mem`, writes the result files |
 | `docs/learning/` | How and why everything works |
 | `docs/BRINGUP_CHECKLIST.md` | Step-by-step hardware session with predicted results |
@@ -76,10 +84,10 @@ table.
 
 | Offset | Name | | Meaning |
 |---|---|---|---|
-| 0x000 | ID | RO | `0x454E0001` |
-| 0x004 | CONFIG | RO | [7:0] pulse set, [15:8] K, [23:16] L, [31:24] M |
+| 0x000 | ID | RO | `0x454E0002` (v1 had no POLARITY/TRAP_M/replay) |
+| 0x004 | CONFIG | RO | [7:0] pulse set, [15:8] K, [23:16] L, [31:24] TRAP_M register |
 | 0x008 | CONTROL | RW | bit 0 run; bit 1 clear (histograms, counters, trap filters; self-clearing) |
-| 0x00C | STATUS | RO | bit 0 run, bit 1 clear in progress |
+| 0x00C | STATUS | RO | bit 0 run, bit 1 clear in progress, bit 2 replay playing, bit 3 replay done |
 | 0x010 | UPTIME | RO | clocks since reset |
 | 0x014 | RUN_CLOCKS | RO | clocks with run = 1 since clear (wraps at 128.8 s) |
 | 0x018 | CONV_GAIN | RW | bin = energy >> CONV_GAIN. Default 5 |
@@ -87,9 +95,16 @@ table.
 | 0x020 | TRIG_WIDTH | RW | trigger window Δt, clocks. Default 50 |
 | 0x024 | COINC_COUNT | RO | coincidences while running |
 | 0x028 | BASELINE | RW | ADC baseline subtracted before the trap. Default 100. Clear after changing |
+| 0x02C | SOURCE | RW | bit 0: 1 = ch0/ch1 take replay lanes A/B, ch2/ch3 a constant BASELINE. Default 0 (pulse_gen) |
 | 0x030 + 4·ch | THRESHOLD_ch | RW | signed 16-bit trigger threshold. Default 1250 |
 | 0x040 + 16·ch | TRIG / EVENT / OVER / PILEUP counts | RO | +0, +4, +8, +C |
+| 0x080 | POLARITY | RW | [3:0] bit ch = 1 inverts ch's samples (4095 − x), for negative pulses. Default 0 |
+| 0x084 | TRAP_M | RW | trap pole-zero shift M (τ ≈ 2^M clocks), 0–13. Default 5 (pulse_gen). Clear after changing |
+| 0x088 | REPLAY_LEN | RW | words to play, 1–131072 |
 | 0x1_0000 + 0x4000·ch + 4·bin | HIST | RO | histogram ch, bins 0..4095 |
+| 0x8_0000 + 4·i | REPLAY_BUF | RW | replay word i: [11:0] lane A (ch0), [27:16] lane B (ch1) |
+
+The AXI window is 1 MB (20 address bits).
 
 ## Key parameters
 
@@ -124,6 +139,40 @@ python3 scripts/daq.py run --seconds 10         # acquire, save to results/, com
 Check `build/timing_summary.rpt` (WNS/WHS ≥ 0) and `build/drc.rpt`. Details, expected output
 and troubleshooting: `docs/BRINGUP_CHECKLIST.md`.
 
+## Replaying recorded waveforms
+
+Software can't stream samples at 33 MHz (Linux reaches about 10⁶ AXI writes per second at best), so loading
+and playing are split. The PS loads a file into the replay buffer while the run is stopped.
+Then the PL plays it once, one word per clock, exactly as an ADC would deliver samples.
+
+```sh
+python3 scripts/make_replay.py                                  # once: .h5 -> replay/*/dNN_P.bin
+python3 -m model.replay replay/photopeak/d12_*.bin              # prediction, no board needed
+python3 scripts/daq.py replay replay/photopeak/d12_*.bin        # upload, play, fetch, compare
+python3 scripts/daq.py replay replay/photopeak/d*.bin --per-file   # one run per depth
+python3 scripts/daq.py replay replay/random/d*.bin              # one pooled spectrum
+```
+
+- **Packing:** events are kept whole (1601 samples, the edge at ~640) and concatenated. A
+  depth doesn't fit the 131,072-word buffer in one load, so it is split into parts of whole
+  events, one load each: photopeak `dNN_0/1.bin` (50 + 50 events), random `dNN_0/1/2.bin`
+  (59 + 58 + 58). The parts of a run play one after another into the same histograms;
+  `--per-file` makes one run per depth. Where two records meet, the signal drops from the
+  tail back to baseline; the trap sees that as a negative pulse and is back at 0 long
+  before the next edge, and the trigger only fires on rising signals. Anode + 200 goes
+  in lane A. Cathode + 3895 goes in lane B, still negative-going; `POLARITY` bit 1 flips it in the FPGA
+  to a baseline of 200. One `BASELINE` (200) then serves both.
+- **Settings** (`daq.py replay` sets them; see `model/replay.py`'s `REPLAY_REGS`):
+  `TRAP_M 13`, because the CZT preamp decays with τ ≈ 8,300 samples (2¹³ = 8192). With
+  `TRAP_M 5` the trap never returns to 0. Thresholds 250 (ch0, anode) and 270 (ch1,
+  cathode): the trigger filter peaks at ~2.6 × amplitude, with noise σ ≈ 38 (anode) and
+  47 (cathode); 1250 would cut most of the Compton continuum.
+- **Exact check:** the trap filters are held in reset between plays. With that, the result
+  doesn't depend on Linux's timing, and `model.compare` checks replay runs bin for bin.
+- **Rate:** within a file the data flows at one sample per clock. At 33.3 MHz that is 1.5×
+  slower than the 50 MS/s recording. The filters count samples, so results are the same.
+- Expected results per test stage: `docs/BRINGUP_CHECKLIST.md`, section 7.
+
 `load_board_top.sh` (sent by `serial_load.py`) unbinds Avnet's PL drivers, sets `FCLK_CLK0`, loads the
 bitstream, then makes sure the PS→PL level shifters are on and the PL reset is released
 before it reads the ID register. An AXI read that nothing answers hangs the bus and
@@ -147,6 +196,12 @@ design files (not testbenches) must avoid them:
   PASS against the model. Runs and settings: `results/README.md`. Avnet's Python 3.5.2 has no
   `mmap` module; `daq_board.py` falls back to libc `mmap()` through `ctypes`.
 - **The ADC format is an assumption** (unsigned). Confirm against the real ADC.
+- **Replay is simulated, not yet built or run on hardware.** The 128K-word buffer uses about 128
+  of the XC7Z030's 265 BRAM36. Check `utilization_impl.rpt` and timing after the first build.
+- **One BASELINE for all channels.** It works for the replay data thanks to the chosen
+  offsets. A real anode + cathode ADC will need per-channel baselines.
+- **Cathode ballistic deficit:** cathode rise times (24–47 samples) exceed the trap's flat
+  top (L − K = 24), so shallow-depth cathode energies read low. Worth trying a longer L.
 - **Baseline must be exact.** An error of 1 count shifts every energy by K·L/2^M = 56 (≈ 2 bins at gain 5).
   A real detector needs a baseline-restoration stage; here the baseline is a register.
 - **RUN_CLOCKS wraps** after 128.8 s, so `daq_board.py` limits runs to 120 s.

@@ -90,18 +90,28 @@ class Board:
             sys.exit("board: " + out)
         return out
 
-    def fetch(self, remote, local):
-        """Copy a file from the board: gzip | base64 between two markers."""
+    def fetch(self, remote, local, tries=3):
+        """Copy a file from the board: its md5, then gzip | base64 between two markers.
+        A transfer that doesn't decode or match the md5 is saved as LOCAL.badN and retried."""
         # The quotes split the markers in the echoed command line, so only
         # the board's real output contains them unbroken.
-        out = self.con.run('echo "__BEG""IN__"; gzip -c \'%s\' | base64; echo "__EN""D__"' % remote,
-                           until=r"__END__\n", timeout=60)
-        m = re.search(r"__BEGIN__\n(.*)\n__END__", out, re.S)
-        if not m:
-            sys.exit("could not fetch %s:\n%s" % (remote, out))
-        data = gzip.decompress(base64.b64decode("".join(m.group(1).split())))
-        with open(local, "wb") as f:
-            f.write(data)
+        cmd = 'md5sum \'%s\'; echo "__BEG""IN__"; gzip -c \'%s\' | base64; echo "__EN""D__"' % (remote, remote)
+        for attempt in range(1, tries + 1):
+            out = self.con.run(cmd, until=r"__END__\n", timeout=60)
+            m = re.search(r"([0-9a-f]{32}) [^\n]*\n__BEGIN__\n(.*)\n__END__", out, re.S)
+            try:
+                data = gzip.decompress(base64.b64decode("".join(m.group(2).split())))
+                if hashlib.md5(data).hexdigest() == m.group(1):
+                    with open(local, "wb") as f:
+                        f.write(data)
+                    return
+            except Exception:
+                pass
+            with open("%s.bad%d" % (local, attempt), "w") as f:
+                f.write(out)
+            print("fetch of %s failed (attempt %d of %d), raw text in %s.bad%d"
+                  % (remote, attempt, tries, local, attempt))
+        sys.exit("could not fetch %s" % remote)
 
 
 def cmd_status(board, a):

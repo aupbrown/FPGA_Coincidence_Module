@@ -8,13 +8,16 @@ Input: pulse_data_Austin_v2_175/waveforms_doi_4min.h5 (see its README): int16,
 baseline-subtracted, axes (depth, event, sample), 1601 samples at 50 MS/s, the
 pulse edge at sample ~640 in every record.
 
-Output, one file per depth and event set:
-    replay/photopeak/d00.bin .. d25.bin   anode + cathode_primary (100 events each)
-    replay/random/d00.bin    .. d25.bin   random_anode + random_cathode_primary (175 each)
+Every event is kept whole (all 1601 samples), and events are concatenated. A
+depth's events do not fit the 131072-word buffer in one go (100 x 1601 =
+160100 words), so each depth is split into parts of whole events, as equal as
+possible, each part one buffer load:
+    replay/photopeak/d00_0.bin, d00_1.bin .. d25_1.bin   anode + cathode_primary, 2 x 50 events
+    replay/random/d00_0.bin .. d25_2.bin                 random_anode + random_cathode_primary,
+                                                         3 parts of 59/58/58 events
+`daq.py replay --per-file` plays all parts of a depth into one run.
 
-Each event is cropped to samples [CROP_START, CROP_START + CROP_LEN): 160
-baseline samples, the edge, then 352 samples of the plateau. Events are
-concatenated. One little-endian uint32 per sample:
+One little-endian uint32 per sample:
     [11:0]  anode   + ANODE_OFFSET           -> replay lane A (ch0)
     [27:16] cathode + CATHODE_OFFSET         -> replay lane B (ch1)
 both clipped to 0..4095 like a 12-bit ADC. The cathode stays negative-going,
@@ -25,13 +28,12 @@ its baseline is 4095 - 3895 = 200 = the anode's, so one BASELINE register
 Needs h5py and numpy on the host (nothing on the board does).
 """
 import argparse
+import glob
 import os
 
 import h5py
 import numpy as np
 
-CROP_START = 480
-CROP_LEN = 512
 ANODE_OFFSET = 200
 CATHODE_OFFSET = 4095 - ANODE_OFFSET        # 3895: baseline 200 after inversion
 BUFFER_WORDS = 1 << 17                      # replay buffer depth in the PL
@@ -42,8 +44,8 @@ SETS = {"photopeak": ("anode", "cathode_primary"),
 
 def pack(anode, cathode):
     """(events, samples) int16 arrays -> uint32 words, and the clipped-sample count."""
-    a = anode[:, CROP_START:CROP_START + CROP_LEN].astype(np.int32) + ANODE_OFFSET
-    c = cathode[:, CROP_START:CROP_START + CROP_LEN].astype(np.int32) + CATHODE_OFFSET
+    a = anode.astype(np.int32) + ANODE_OFFSET
+    c = cathode.astype(np.int32) + CATHODE_OFFSET
     clipped = int(((a < 0) | (a > 4095)).sum() + ((c < 0) | (c > 4095)).sum())
     a, c = np.clip(a, 0, 4095), np.clip(c, 0, 4095)
     words = (a.astype(np.uint32) | (c.astype(np.uint32) << 16)).ravel()
@@ -59,17 +61,22 @@ def main():
     with h5py.File(a.h5, "r") as f:
         for name, (an_key, ca_key) in SETS.items():
             anode, cathode = f[an_key][:], f[ca_key][:]
+            depths, events, samples = anode.shape
+            parts = -(-events * samples // BUFFER_WORDS)          # ceiling division
             outdir = os.path.join(a.out, name)
             os.makedirs(outdir, exist_ok=True)
+            for old in glob.glob(os.path.join(outdir, "*.bin")):  # no stale files for d*.bin
+                os.remove(old)
             total_clipped = 0
-            for depth in range(anode.shape[0]):
-                words, clipped = pack(anode[depth], cathode[depth])
-                assert len(words) <= BUFFER_WORDS, "file does not fit the replay buffer"
-                words.tofile(os.path.join(outdir, "d%02d.bin" % depth))
-                total_clipped += clipped
-            print("%s: %d files of %d events x %d samples = %d words (%d KB) each, "
-                  "%d samples clipped in all" % (outdir, anode.shape[0], anode.shape[1], CROP_LEN,
-                                                  len(words), len(words) * 4 // 1024, total_clipped))
+            for depth in range(depths):
+                for p, idx in enumerate(np.array_split(np.arange(events), parts)):
+                    words, clipped = pack(anode[depth, idx], cathode[depth, idx])
+                    assert len(words) <= BUFFER_WORDS, "part does not fit the replay buffer"
+                    words.tofile(os.path.join(outdir, "d%02d_%d.bin" % (depth, p)))
+                    total_clipped += clipped
+            print("%s: %d depths x %d parts of %s events x %d samples, %d samples clipped in all"
+                  % (outdir, depths, parts, "/".join(str(len(i)) for i in np.array_split(range(events), parts)),
+                     samples, total_clipped))
 
 
 if __name__ == "__main__":

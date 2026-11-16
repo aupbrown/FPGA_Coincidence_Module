@@ -18,7 +18,7 @@ counting clocks after each file. With the input fixed, the prediction is
 exact: compare a run bin for bin, with no tolerance (except run_clocks, set
 by how long the PS takes to stop the run).
 
-    python3 -m model.replay replay/photopeak/d12.bin               # print a summary
+    python3 -m model.replay replay/photopeak/d12_*.bin             # print a summary
     python3 -m model.replay replay/random/d*.bin --out results/model_random
     python3 -m model.replay FILE --threshold 0 300 --trap-m 13     # other settings
 
@@ -40,13 +40,17 @@ CATHODE_OFFSET = 3895
 # Settings for Max's CZT data, as packed by scripts/make_replay.py.
 # trap_m 13: the preamp decays with tau ~ 8300 samples (2**13 = 8192).
 # polarity 0b0010: invert ch1, the negative-going cathode. baseline 200: both
-# lanes' offset. threshold 250: the trigger filter peaks at ~2.7 x the pulse
-# amplitude and its noise is sigma ~ 37 on this data. A scan of 5 random-set
-# depths gave noise triggers in ch0 of 25 / 11 / 3 / 1 at 200 / 220 / 240 / 260.
-# The default 1250 would cut everything below ~460 ADU (most of the Compton
+# lanes' offset. Thresholds: the trigger filter peaks at ~2.6 x the pulse
+# amplitude; its noise is sigma ~ 38 on the anode and ~ 47 on the cathode.
+# ch0 250 (6.5 sigma, ~95 ADU ~ 70 keV): a scan of 5 random-set depths gave
+# noise triggers of 25 / 11 / 3 / 1 at 200 / 220 / 240 / 260. ch1 270 (5.7
+# sigma): over the whole photopeak set (2600 full-length events) noise
+# triggers / missed cathode pulses were 6 / 29 at 250, 3 / 59 at 270, 2 / 105
+# at 290 -- the misses are shallow events with small cathode signals. The
+# default 1250 would cut everything below ~460 ADU (most of the Compton
 # continuum).
 REPLAY_REGS = dict(C.DEFAULT_REGS, trap_m=13, polarity=0b0010, baseline=200,
-                   threshold=[250, 250, 250, 250])
+                   threshold=[250, 270, 250, 250])
 
 
 def read_words(path):

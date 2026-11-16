@@ -18,15 +18,17 @@ may hold the port. Run from the repository root:
     python3 scripts/daq.py sweep-threshold 3 100 300 500 700 900 --seconds 1
 
 Replaying Max's CZT waveforms (files from scripts/make_replay.py):
-    python3 scripts/daq.py upload replay/photopeak/d12.bin     # to /tmp/replay on the board
-    python3 scripts/daq.py replay replay/photopeak/d12.bin     # upload if needed, play, compare
+    python3 scripts/daq.py upload replay/photopeak/d12_*.bin   # to /tmp/replay on the board
+    python3 scripts/daq.py replay replay/photopeak/d12_*.bin   # upload if needed, play, compare
     python3 scripts/daq.py replay replay/photopeak/d*.bin --per-file   # one run per depth
     python3 scripts/daq.py replay replay/random/d*.bin                 # one pooled run
 replay sets SOURCE = 1 and the settings this data needs (model/replay.py's
-REPLAY_REGS: TRAP_M 13, POLARITY 0010, BASELINE 200, thresholds 250; override
-with --trap-m, --threshold ...). Each run is compared with model/replay.py
-bin for bin. Uploads go at ~5 KB/s: ~45 s per photopeak file, ~75 s per
-random file, skipped when the board already has the file (md5). /tmp is
+REPLAY_REGS: TRAP_M 13, POLARITY 0010, BASELINE 200, thresholds 250 (ch0) and
+270 (ch1); override with --trap-m, --threshold ...). --per-file makes one run
+per depth: the parts of a depth (dNN_0.bin, dNN_1.bin, ...) play into the same
+run. Each run is compared with model/replay.py bin for bin. Uploads go at
+~5 KB/s: ~70 s per photopeak part (2 per depth), ~80 s per random part (3 per
+depth), skipped when the board already has the file (md5). /tmp is
 emptied at reboot.
 
 How it works: this script types commands into the board's root shell over the
@@ -189,8 +191,11 @@ def cmd_replay(board, a):
     board.daq("set threshold %d 2" % regs["threshold"][2])
     board.daq("set threshold %d 3" % regs["threshold"][3])
     if a.per_file:
-        results = [replay_run(board, [f], "_" + os.path.splitext(os.path.basename(f))[0])
-                   for f in a.files]
+        groups = {}                     # d12_0.bin, d12_1.bin -> one run "d12"
+        for f in a.files:
+            groups.setdefault(os.path.basename(f).split("_")[0].split(".")[0], []).append(f)
+        results = [replay_run(board, sorted(files), "_" + depth)
+                   for depth, files in sorted(groups.items())]
         print("\n%d of %d runs PASS" % (sum(results), len(results)))
         ok = all(results)
     else:
@@ -218,12 +223,12 @@ def main():
     p.add_argument("files", nargs="+")
     p = sub.add_parser("replay")
     p.add_argument("files", nargs="+")
-    p.add_argument("--per-file", action="store_true", help="one run (and result folder) per file")
+    p.add_argument("--per-file", action="store_true", help="one run (and result folder) per depth: all of dNN_*.bin")
     p.add_argument("--trap-m", type=int, default=replay.REPLAY_REGS["trap_m"])
     p.add_argument("--polarity", default=bin(replay.REPLAY_REGS["polarity"]))
     p.add_argument("--baseline", type=int, default=replay.REPLAY_REGS["baseline"])
     p.add_argument("--threshold", type=int, nargs=2, metavar=("CH0", "CH1"),
-                   help="trigger thresholds for ch0 (anode) and ch1 (cathode); default 250 250")
+                   help="trigger thresholds for ch0 (anode) and ch1 (cathode); default 250 270")
     a = ap.parse_args()
 
     board = Board(a.port)

@@ -11,7 +11,7 @@
 # ----------------------------------------------------------------------------
 
 # --- Clock -------------------------------------------------------------------
-# FCLK_CLK0 from the PS7 block, set by Linux to 33.333 MHz (IO PLL 1000 MHz
-# / 30) -> 30 ns period. The PS7 IP's own XDC (which would define this clock)
+# FCLK_CLK0 from the PS7 block, set by Linux to 100 MHz (IO PLL 1000 MHz
+# / 10) -> 10 ns period. The PS7 IP's own XDC (which would define this clock)
 # is disabled in build.tcl.
-create_clock -period 30.000 -name clk_fpga_0 [get_pins -hierarchical {*PS7_i/FCLKCLK[0]}];
+create_clock -period 10.000 -name clk_fpga_0 [get_pins -hierarchical {*PS7_i/FCLKCLK[0]}];

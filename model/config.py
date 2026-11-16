@@ -14,7 +14,7 @@ TRAP_M = 5          # reset value of the TRAP_M register (and pulse_gen's decay)
 WINDOW = L + 16     # energy_capture window
 TRIG_FILTER_WIDTH = 10
 
-CLOCK_HZ = 33_333_333
+CLOCK_HZ = 100_000_000
 ID_VALUE = 0x454E0002
 ID_V1 = 0x454E0001  # before POLARITY/TRAP_M: results/ runs up to 2026-10-26
 REG_BASE = 0x43C00000

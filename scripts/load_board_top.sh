@@ -10,7 +10,7 @@
 #   1. Stop Avnet's web demo and unbind the Linux drivers for the PL
 #      peripherals in Avnet's design. Reconfiguring the PL under a driver that
 #      is still using it hangs the AXI bus and freezes Linux.
-#   2. Set FCLK_CLK0, board_top's clock, to 33.333 MHz and enable it. The rate
+#   2. Set FCLK_CLK0, board_top's clock, to 100 MHz and enable it. The rate
 #      and enable live in the PS, not in the bitstream, and reset at reboot.
 #   3. Write the bitstream to /dev/xdevcfg and check that DONE went high.
 #   4. Make sure the PS-PL AXI path is open (level shifters on, PL reset
@@ -23,7 +23,7 @@
 BIT=${1:-/mnt/board_top.bit.bin}
 DEVCFG=/sys/devices/soc0/amba/f8007000.devcfg
 FCLK=/sys/class/fclk/fclk0
-RATE=33333333                     # IO PLL 1000 MHz / 30
+RATE=100000000                    # IO PLL 1000 MHz / 10
 
 fail() { echo "ERROR: $*"; exit 1; }
 

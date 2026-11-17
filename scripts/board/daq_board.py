@@ -46,7 +46,7 @@ except ImportError:          # Avnet's image ships python3 without the mmap modu
 
 BASE = 0x43C00000
 SIZE = 0x100000           # registers, histograms, replay buffer
-ID_VALUE = 0x454E0002
+ID_VALUE = 0x454E0003
 CLOCK_HZ = 33333333
 MAX_SECONDS = 120          # RUN_CLOCKS is 32 bits: wraps after 128.8 s
 
@@ -55,7 +55,7 @@ REG = {
     "uptime": 0x010, "run_clocks": 0x014, "conv_gain": 0x018,
     "user_pattern": 0x01C, "trig_width": 0x020, "coinc_count": 0x024,
     "baseline": 0x028, "source": 0x02C, "polarity": 0x080, "trap_m": 0x084,
-    "replay_len": 0x088,
+    "replay_len": 0x088, "blr_enable": 0x08C,
 }
 for _ch in range(4):
     REG["threshold_%d" % _ch] = 0x030 + 4 * _ch
@@ -63,13 +63,15 @@ for _ch in range(4):
     REG["event_count_%d" % _ch] = 0x044 + 16 * _ch
     REG["over_count_%d" % _ch] = 0x048 + 16 * _ch
     REG["pileup_count_%d" % _ch] = 0x04C + 16 * _ch
+    REG["blr_%d" % _ch] = 0x0C0 + 4 * _ch      # baseline restorer output, signed
 
 # Short names accepted by "set"
 SETTABLE = {"threshold": "threshold_%d", "trig_width": "trig_width",
             "pattern": "user_pattern", "gain": "conv_gain", "baseline": "baseline",
-            "polarity": "polarity", "trap_m": "trap_m", "source": "source"}
+            "polarity": "polarity", "trap_m": "trap_m", "source": "source",
+            "blr_enable": "blr_enable"}
 CONFIG_NAMES = (["conv_gain", "user_pattern", "trig_width", "baseline", "source", "polarity",
-                 "trap_m"] +
+                 "trap_m", "blr_enable"] +
                 ["threshold_%d" % ch for ch in range(4)])
 COUNTER_NAMES = ["run_clocks", "coinc_count"] + [
     "%s_%d" % (n, ch) for ch in range(4)
@@ -134,8 +136,8 @@ class Core(object):
 
     def get(self, name):
         v = self.rd(REG[name])
-        if name.startswith("threshold") and v >= 0x80000000:
-            v -= 1 << 32                          # thresholds are signed
+        if (name.startswith("threshold") or name.startswith("blr_")) and v >= 0x80000000:
+            v -= 1 << 32                          # thresholds and BLR values are signed
         return v
 
     def clear(self):
@@ -204,7 +206,7 @@ class Core(object):
     def status(self):
         for n in ["id", "config", "control", "status", "uptime"]:
             print("%-16s 0x%08X" % (n, self.get(n)))
-        for n in CONFIG_NAMES + COUNTER_NAMES:
+        for n in CONFIG_NAMES + COUNTER_NAMES + ["blr_%d" % ch for ch in range(4)]:
             print("%-16s %d" % (n, self.get(n)))
 
 

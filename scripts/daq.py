@@ -14,6 +14,7 @@ may hold the port. Run from the repository root:
     python3 scripts/daq.py set baseline 100
     python3 scripts/daq.py set polarity 0b0010         # invert ch1 (negative pulses)
     python3 scripts/daq.py set trap_m 13               # trap pole-zero: tau ~ 2**13 clocks
+    python3 scripts/daq.py set blr_enable 0b0011       # baseline restorer on ch0, ch1
     python3 scripts/daq.py run --seconds 10            # acquire, fetch, compare
     python3 scripts/daq.py sweep-threshold 3 100 300 500 700 900 --seconds 1
 
@@ -22,6 +23,7 @@ Replaying Max's CZT waveforms (files from scripts/make_replay.py):
     python3 scripts/daq.py replay replay/photopeak/d12_*.bin   # upload if needed, play, compare
     python3 scripts/daq.py replay replay/photopeak/d*.bin --per-file   # one run per depth
     python3 scripts/daq.py replay replay/random/d*.bin                 # one pooled run
+    python3 scripts/daq.py replay replay/photopeak/d12_*.bin --blr     # with the baseline restorer
 replay sets SOURCE = 1 and the settings this data needs (model/replay.py's
 REPLAY_REGS: TRAP_M 13, POLARITY 0010, BASELINE 200, thresholds 250 (ch0) and
 270 (ch1); override with --trap-m, --threshold ...). --per-file makes one run
@@ -220,7 +222,8 @@ def replay_run(board, files, tag, remotes):
 def cmd_replay(board, a):
     remotes = upload(board, a.files)
     regs = replay.REPLAY_REGS
-    settings = [("trap_m", a.trap_m), ("polarity", a.polarity), ("baseline", a.baseline)]
+    settings = [("trap_m", a.trap_m), ("polarity", a.polarity), ("baseline", a.baseline),
+                ("blr_enable", "0b0011" if a.blr else "0")]
     for name, value in settings:
         board.daq("set %s %s" % (name, value))
     for ch, th in enumerate(a.threshold or regs["threshold"][:2]):
@@ -247,7 +250,7 @@ def main():
     sub.add_parser("status")
     p = sub.add_parser("set")
     p.add_argument("name", choices=["threshold", "trig_width", "pattern", "gain", "baseline",
-                                    "polarity", "trap_m", "source"])
+                                    "polarity", "trap_m", "source", "blr_enable"])
     p.add_argument("value")
     p.add_argument("--ch", type=int, choices=range(4))
     p = sub.add_parser("run")
@@ -264,6 +267,7 @@ def main():
     p.add_argument("--trap-m", type=int, default=replay.REPLAY_REGS["trap_m"])
     p.add_argument("--polarity", default=bin(replay.REPLAY_REGS["polarity"]))
     p.add_argument("--baseline", type=int, default=replay.REPLAY_REGS["baseline"])
+    p.add_argument("--blr", action="store_true", help="baseline restorer on ch0/ch1 (BLR_ENABLE = 0011)")
     p.add_argument("--threshold", type=int, nargs=2, metavar=("CH0", "CH1"),
                    help="trigger thresholds for ch0 (anode) and ch1 (cathode); default 250 270")
     a = ap.parse_args()

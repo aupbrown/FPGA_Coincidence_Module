@@ -3,7 +3,8 @@
 -- System test of the replay path, through the AXI4-Lite port, playing the
 -- part of `daq_board.py replay`:
 --   1. SOURCE = 1, POLARITY = 0010 (ch1 inverted), TRAP_M = 13, BASELINE = 200,
---      thresholds 250 -- the settings for Max's CZT data -- then clear
+--      thresholds 250 -- the settings for Max's CZT data -- and BLR_ENABLE =
+--      0011 (baseline restorer on ch0/ch1), then clear
 --   2. for each of sim/vectors/replay_a.txt and replay_b.txt (synthetic
 --      CZT-like events written by `python3 -m model.expected --vectors`):
 --      load the buffer, read it back, set REPLAY_LEN, run until STATUS.done,
@@ -120,6 +121,7 @@ begin
             dump_reg(cfg, "source",       16#02C#, false);
             dump_reg(cfg, "polarity",     16#080#, false);
             dump_reg(cfg, "trap_m",       16#084#, false);
+            dump_reg(cfg, "blr_enable",   16#08C#, false);
             for ch in 0 to 3 loop
                 dump_reg(cfg, "threshold_" & integer'image(ch), 16#030# + 4*ch, true);
             end loop;
@@ -202,11 +204,12 @@ begin
         wait_clocks(5);
 
         axi_read(16#000#, d);
-        assert d = x"454E0002" report "bad ID 0x" & to_hstring(d) severity failure;
+        assert d = x"454E0003" report "bad ID 0x" & to_hstring(d) severity failure;
 
         axi_write(16#02C#, 1);                     -- SOURCE = replay
         axi_write(16#080#, 2);                     -- POLARITY: invert ch1 (cathode)
         axi_write(16#084#, 13);                    -- TRAP_M
+        axi_write(16#08C#, 3);                     -- BLR_ENABLE: ch0 and ch1
         axi_write(16#028#, 200);                   -- BASELINE
         for ch in 0 to 3 loop
             axi_write(16#030# + 4*ch, 250);        -- THRESHOLD_ch

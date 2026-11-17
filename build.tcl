@@ -97,6 +97,7 @@ read_vhdl {
     src/detector_top.vhd
     src/trap_filter.vhd
     src/energy_capture.vhd
+    src/baseline_restorer.vhd
     src/histogram.vhd
     src/axi_lite_slave.vhd
     src/core_top.vhd

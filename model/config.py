@@ -15,7 +15,8 @@ WINDOW = L + 16     # energy_capture window
 TRIG_FILTER_WIDTH = 10
 
 CLOCK_HZ = 33_333_333
-ID_VALUE = 0x454E0002
+ID_VALUE = 0x454E0003
+ID_V2 = 0x454E0002  # before the baseline restorer (BLR_ENABLE)
 ID_V1 = 0x454E0001  # before POLARITY/TRAP_M: results/ runs up to 2026-10-26
 REG_BASE = 0x43C00000
 
@@ -43,7 +44,12 @@ DEFAULT_REGS = dict(
     baseline=100,
     polarity=0b0000,
     trap_m=TRAP_M,
+    blr_enable=0b0000,
 )
+
+BLR_NSHIFT = 8          # baseline_restorer: mean of 2**8 quiet samples
+BLR_HOLD = 2 * (K + L)  # quiet clocks needed after busy (trigger or |trap| > BLR_LIMIT)
+BLR_LIMIT = 1024        # trap units
 
 
 def config_word(pulse_set, trap_m=TRAP_M):

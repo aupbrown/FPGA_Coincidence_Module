@@ -145,34 +145,59 @@ class TrapFilter:
 
 class EnergyCapture:
     """src/energy_capture.vhd"""
-    IDLE, CAPTURE, DONE = range(3)
+    IDLE, CAPTURE, SUB, DONE = range(4)
 
     def __init__(self, window=C.WINDOW):
         self.window = window
         self.state, self.trig_d, self.count, self.peak = self.IDLE, False, 0, 0
+        self.blr_l = self.energy = 0
 
     def outputs(self, trig_in):
         """(energy, energy_valid, pileup) during this clock."""
         rise = trig_in and not self.trig_d
-        energy = 0 if self.peak < 0 else self.peak
-        return energy, self.state == self.DONE, rise and self.state != self.IDLE
+        return self.energy, self.state == self.DONE, rise and self.state != self.IDLE
 
-    def step(self, trig_in, trap_in):
+    def step(self, trig_in, trap_in, blr=0):
         rise = trig_in and not self.trig_d
         st = self.state
         if st == self.IDLE:
             if rise:
-                self.state, self.count, self.peak = self.CAPTURE, 0, trap_in
+                self.state, self.count, self.peak, self.blr_l = self.CAPTURE, 0, trap_in, blr
         elif st == self.CAPTURE:
             if trap_in > self.peak:
                 self.peak = trap_in
             if self.count == self.window - 1:
-                self.state = self.DONE
+                self.state = self.SUB
             else:
                 self.count += 1
+        elif st == self.SUB:
+            self.energy = max(self.peak - self.blr_l, 0)
+            self.state = self.DONE
         else:
             self.state = self.IDLE
         self.trig_d = trig_in
+
+
+class BaselineRestorer:
+    """src/baseline_restorer.vhd: mean trap output over 2**NSHIFT quiet clocks."""
+
+    def __init__(self, nshift=C.BLR_NSHIFT, hold=C.BLR_HOLD, limit=C.BLR_LIMIT):
+        self.nshift, self.hold, self.limit = nshift, hold, limit
+        self.quiet = self.n = self.sum = self.out = 0
+
+    def step(self, trig_in, trap_in):
+        busy = trig_in or abs(trap_in) > self.limit
+        accumulate = not busy and self.quiet == self.hold
+        if busy:
+            self.quiet = 0
+        elif self.quiet < self.hold:
+            self.quiet += 1
+        if accumulate:
+            total = self.sum + trap_in
+            if self.n == (1 << self.nshift) - 1:
+                self.out, self.sum, self.n = total >> self.nshift, 0, 0
+            else:
+                self.sum, self.n = total, self.n + 1
 
 
 class Core:
@@ -191,6 +216,7 @@ class Core:
         self.trigs = [Trigger() for _ in range(4)]
         self.traps = [TrapFilter(m=r["trap_m"]) for _ in range(4)]
         self.caps = [EnergyCapture() for _ in range(4)]
+        self.blrs = [BaselineRestorer() for _ in range(4)]
         self.coinc = False
         self.reset_counts()
 
@@ -235,7 +261,9 @@ class Core:
         bus = sum(int(t) << ch for ch, t in enumerate(trig))
         self.coinc = bus == r["user_pattern"]
         for ch in range(4):
-            self.caps[ch].step(trig[ch], trap[ch])
+            blr = self.blrs[ch].out if r["blr_enable"] >> ch & 1 else 0
+            self.caps[ch].step(trig[ch], trap[ch], blr)
+            self.blrs[ch].step(trig[ch], trap[ch])
             self.traps[ch].step(adc[ch], r["baseline"])
             self.trigs[ch].step(adc[ch], r["threshold"][ch], r["trig_width"])
             self.pulses[ch].step()

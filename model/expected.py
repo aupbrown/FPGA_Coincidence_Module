@@ -19,7 +19,7 @@ import os
 
 from . import config as C
 from . import replay
-from .dsp import Core, PulseGen, TrapFilter
+from .dsp import BaselineRestorer, Core, PulseGen, TrapFilter
 
 
 def super_period(pulse_set):
@@ -93,7 +93,36 @@ def write_vectors(outdir="sim/vectors", n=3000):
             gen.step()
             f.write(f"{x} {trap.out()}\n")
     print(f"wrote {outdir}/pulse_gen.txt and {outdir}/trap_filter.txt ({n} rows each)")
+    write_blr_vectors(outdir)
     replay.write_vectors(outdir)
+
+
+def write_blr_vectors(outdir, n=6000):
+    """tb_baseline_restorer: row i = trig_in, trap_in at rising edge i, and blr_out after it.
+
+    A trap output with an offset that steps (+37, then -23, then a slow drift up),
+    noise, pulses (trigger high 60 clocks, trap output up to ~30000) arriving
+    both between and in the middle of accumulation blocks, and an 88-clock
+    negative swing of -20000 with no trigger.
+    """
+    blr, x = BaselineRestorer(), 12345
+    pulses = {300, 700, 1250, 2300, 2380, 3900, 5200}       # trigger rise clocks
+    t_rise = -10**6
+    with open(os.path.join(outdir, "baseline_restorer.txt"), "w") as f:
+        for i in range(n):
+            x = (1103515245 * x + 12345) % 2 ** 31
+            noise = (x >> 20) % 61 - 30
+            offset = 37 if i < 2000 else (-23 if i < 4000 else -23 + (i - 4000) // 40)
+            if i in pulses:
+                t_rise = i
+            k = i - t_rise
+            trig = 0 <= k < 60
+            trap = offset + noise + (30000 * min(k, 32) // 32 if 0 <= k < 150 else 0)
+            if 3000 <= i < 3088:                    # negative swing, no trigger
+                trap -= 20000
+            blr.step(trig, trap)
+            f.write(f"{int(trig)} {trap} {blr.out}\n")
+    print(f"wrote {outdir}/baseline_restorer.txt ({n} rows)")
 
 
 def main():

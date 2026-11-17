@@ -122,6 +122,7 @@ begin
             dump_reg(cfg, "baseline",     16#028#, false);
             dump_reg(cfg, "polarity",     16#080#, false);
             dump_reg(cfg, "trap_m",       16#084#, false);
+            dump_reg(cfg, "blr_enable",   16#08C#, false);
             for ch in 0 to 3 loop
                 dump_reg(cfg, "threshold_" & integer'image(ch), 16#030# + 4*ch, true);
             end loop;
@@ -178,7 +179,7 @@ begin
         wait_clocks(5);
 
         axi_read(16#000#, d);
-        assert d = x"454E0002" report "bad ID 0x" & to_hstring(d) severity failure;
+        assert d = x"454E0003" report "bad ID 0x" & to_hstring(d) severity failure;
         axi_read(16#004#, d);
         assert d = x"05382002" report "bad CONFIG 0x" & to_hstring(d) severity failure;
 

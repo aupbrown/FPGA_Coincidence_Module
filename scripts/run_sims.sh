@@ -5,18 +5,19 @@
 #
 #   1. VHDL-93 analysis of all design sources (what Vivado 2022.2 accepts)
 #   2. Python model writes the expected sample files (sim/vectors/)
-#   3. Self-checking testbenches: pulse_gen, trap_filter, histogram vs the model
+#   3. Self-checking testbenches: pulse_gen, trap_filter, histogram,
+#      baseline_restorer vs the model
 #   4. tb_core_top: two full runs through the AXI port, results written to
 #      build/sim_out/run_default and run_custom in the board's file format.
 #      tb_replay: two replay files played through ch0/ch1 (synthetic CZT-like
-#      events), written to build/sim_out/run_replay
+#      events) with the baseline restorer on, written to build/sim_out/run_replay
 #   5. model.compare checks those runs against the model's prediction
 # Stops at the first failure.
 # ----------------------------------------------------------------------------
 set -e
 
 SRC="src/pulse_config_pkg.vhd src/pulse_gen.vhd src/replay_source.vhd src/trigger.vhd src/coincidence.vhd
-     src/detector_top.vhd src/trap_filter.vhd src/energy_capture.vhd src/histogram.vhd
+     src/detector_top.vhd src/trap_filter.vhd src/energy_capture.vhd src/baseline_restorer.vhd src/histogram.vhd
      src/axi_lite_slave.vhd src/core_top.vhd"
 W=build/nvc
 
@@ -32,8 +33,8 @@ python3 -m model.expected --vectors
 echo "== 3./4. testbenches"
 mkdir -p build/sim_out/run_default build/sim_out/run_custom build/sim_out/run_replay
 nvc --work=$W/work -a $SRC sim/tb_pulse_generator.vhd sim/tb_trap_filter.vhd \
-    sim/tb_histogram.vhd sim/tb_core_top.vhd sim/tb_replay.vhd
-for tb in tb_pulse_gen tb_trap_filter tb_histogram tb_core_top tb_replay; do
+    sim/tb_histogram.vhd sim/tb_baseline_restorer.vhd sim/tb_core_top.vhd sim/tb_replay.vhd
+for tb in tb_pulse_gen tb_trap_filter tb_histogram tb_baseline_restorer tb_core_top tb_replay; do
     nvc --work=$W/work -e $tb
     nvc --work=$W/work -r $tb --ieee-warnings=off
 done

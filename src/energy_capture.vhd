@@ -15,6 +15,10 @@ use ieee.numeric_std.all;
 -- A trigger that arrives while a window is already open is pile-up: a second
 -- pulse on top of the first, whose energies cannot be separated. It is not
 -- measured; pileup pulses for one clock so it can be counted.
+--
+-- Baseline: blr (from baseline_restorer, or 0 when the BLR is off) is latched
+-- on the trigger's rising edge. After the window, one more clock (SUB_S)
+-- registers energy = peak - blr, 0 if negative; energy_valid follows.
 entity energy_capture is
     Generic (ACC_WIDTH : integer := 32;
              WINDOW    : integer := 72);
@@ -22,6 +26,7 @@ entity energy_capture is
           reset        : in  std_logic;
           trig_in      : in  std_logic;
           trap_in      : in  signed(ACC_WIDTH-1 downto 0);
+          blr          : in  signed(ACC_WIDTH-1 downto 0);
           energy       : out unsigned(ACC_WIDTH-1 downto 0);
           energy_valid : out std_logic;
           pileup       : out std_logic);
@@ -29,17 +34,21 @@ end energy_capture;
 
 architecture behavior of energy_capture is
 
-type state_t is (IDLE_S, CAPTURE_S, DONE_S);
+type state_t is (IDLE_S, CAPTURE_S, SUB_S, DONE_S);
 signal state : state_t := IDLE_S;
 
 signal trig_d    : std_logic := '0';
 signal trig_rise : std_logic;
 signal count     : integer range 0 to WINDOW := 0;
 signal peak      : signed(ACC_WIDTH-1 downto 0) := (others => '0');
+signal blr_l     : signed(ACC_WIDTH-1 downto 0) := (others => '0');
+signal diff      : signed(ACC_WIDTH downto 0);
+signal energy_r  : unsigned(ACC_WIDTH-1 downto 0) := (others => '0');
 
 begin
 
     trig_rise <= trig_in and not trig_d;
+    diff      <= resize(peak, ACC_WIDTH+1) - resize(blr_l, ACC_WIDTH+1);
 
     process (clock)
     begin
@@ -49,6 +58,8 @@ begin
                 state <= IDLE_S;
                 count <= 0;
                 peak  <= (others => '0');
+                blr_l <= (others => '0');
+                energy_r <= (others => '0');
             else
                 case state is
                     when IDLE_S =>
@@ -56,6 +67,7 @@ begin
                             state <= CAPTURE_S;
                             count <= 0;
                             peak  <= trap_in;
+                            blr_l <= blr;
                         end if;
 
                     when CAPTURE_S =>
@@ -63,10 +75,19 @@ begin
                             peak <= trap_in;
                         end if;
                         if count = WINDOW - 1 then
-                            state <= DONE_S;
+                            state <= SUB_S;
                         else
                             count <= count + 1;
                         end if;
+
+                    when SUB_S =>
+                        -- A negative result (no real pulse in the window) reads as 0.
+                        if diff < 0 then
+                            energy_r <= (others => '0');
+                        else
+                            energy_r <= unsigned(diff(ACC_WIDTH-1 downto 0));
+                        end if;
+                        state <= DONE_S;
 
                     when DONE_S =>
                         state <= IDLE_S;
@@ -76,8 +97,7 @@ begin
     end process;
 
     energy_valid <= '1' when state = DONE_S else '0';
-    -- A negative peak (no real pulse in the window) reads as energy 0.
-    energy <= (others => '0') when peak < 0 else unsigned(peak);
+    energy <= energy_r;
     pileup <= '1' when trig_rise = '1' and state /= IDLE_S else '0';
 
 end behavior;

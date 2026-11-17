@@ -14,7 +14,7 @@ use work.pulse_config_pkg.all;
 --
 -- Register map (byte offsets from the AXI base, 0x43C0_0000 on the board).
 -- RO = read only, RW = read/write. Defaults are the reset values.
---   0x000 ID           RO  0x454E_0002 ("EN", version 2)
+--   0x000 ID           RO  0x454E_0003 ("EN", version 3)
 --   0x004 CONFIG       RO  [7:0] PULSE_SET, [15:8] K, [23:16] L, [31:24] TRAP_M register
 --   0x008 CONTROL      RW  bit 0 run. bit 1 clear: write 1 to zero the histograms
 --                          and every counter and reset the trap filters
@@ -41,6 +41,11 @@ use work.pulse_config_pkg.all;
 --                          tau ~ 2**M clocks. Default TRAP_M generic (5, which
 --                          matches pulse_gen). Clear after changing it.
 --   0x088 REPLAY_LEN   RW  [17:0] words to play, 1 .. 131072
+--   0x08C BLR_ENABLE   RW  [3:0] bit ch = 1: subtract channel ch's baseline
+--                          restorer output from each energy. Default 0
+--   0x0C0 + 4*ch BLR_ch RO signed baseline restorer output: the mean trap
+--                          output over the last 256 quiet clocks (~0 when
+--                          BASELINE and TRAP_M are right)
 --   0x1_0000 + 0x4000*ch + 4*bin  RO  histogram ch, bins 0..4095
 --   0x8_0000 + 4*i     RW  replay buffer word i, 0 .. 131071
 --                          ([11:0] lane A, [27:16] lane B)
@@ -78,7 +83,7 @@ end core_top;
 
 architecture behavior of core_top is
 
-constant ID_VALUE : std_logic_vector(31 downto 0) := x"454E0002";
+constant ID_VALUE : std_logic_vector(31 downto 0) := x"454E0003";
 constant WINDOW   : integer := L + 16;   -- energy window, see energy_capture.vhd
 
 constant CFG : chan_cfg_t := PULSE_SETS(PULSE_SET);
@@ -99,6 +104,7 @@ signal gen_adc      : adc_array;    -- pulse_gen outputs
 signal src_adc      : adc_array;    -- after the source mux
 signal adc          : adc_array;    -- after the polarity stage
 signal trap         : trap_array;
+signal blr, blr_in  : trap_array;
 signal energy       : energy_array;
 signal energy_valid : std_logic_vector(3 downto 0);
 signal pileup       : std_logic_vector(3 downto 0);
@@ -123,6 +129,7 @@ signal polarity     : std_logic_vector(3 downto 0)  := "0000";
 signal trap_m_reg   : std_logic_vector(3 downto 0)  := std_logic_vector(to_unsigned(TRAP_M, 4));
 signal source       : std_logic := '0';
 signal replay_len   : unsigned(17 downto 0) := (others => '0');
+signal blr_enable   : std_logic_vector(3 downto 0)  := "0000";
 signal trap_reset   : std_logic;
 
 -- Replay
@@ -234,12 +241,21 @@ begin
                       adc_in => adc(ch), baseline => baseline,
                       decay_shift => trap_m_reg, trap_out => trap(ch));
 
+        -- Mean trap output while there is no pulse (see baseline_restorer.vhd)
+        blr_i: entity work.baseline_restorer
+            generic map (ACC_WIDTH => 32, NSHIFT => 8, HOLD => 2 * (K + L), LIMIT => 1024)
+            port map (clock => aclk, reset => trap_reset,
+                      trig_in => trig(ch), trap_in => trap(ch), blr_out => blr(ch));
+
+        blr_in(ch) <= blr(ch) when blr_enable(ch) = '1' else (others => '0');
+
         capture_i: entity work.energy_capture
             generic map (ACC_WIDTH => 32, WINDOW => WINDOW)
             port map (clock        => aclk,
                       reset        => rst,
                       trig_in      => trig(ch),
                       trap_in      => trap(ch),
+                      blr          => blr_in(ch),
                       energy       => energy(ch),
                       energy_valid => energy_valid(ch),
                       pileup       => pileup(ch));
@@ -332,6 +348,7 @@ begin
                 trap_m_reg   <= std_logic_vector(to_unsigned(TRAP_M, 4));
                 source       <= '0';
                 replay_len   <= (others => '0');
+                blr_enable   <= "0000";
             elsif wr_en = '1' and wr_addr(19 downto 16) = "0000" then
                 word := to_integer(unsigned(wr_addr(15 downto 2)));
                 case word is
@@ -366,6 +383,9 @@ begin
                     when 16#088#/4 =>
                         v := apply_strb(std_logic_vector(resize(replay_len, 32)), wr_data, wr_strb);
                         replay_len <= unsigned(v(17 downto 0));
+                    when 16#08C#/4 =>
+                        v := apply_strb(x"0000000" & blr_enable, wr_data, wr_strb);
+                        blr_enable <= v(3 downto 0);
                     when others =>
                         null;
                 end case;
@@ -423,6 +443,9 @@ begin
                 when 16#080#/4 => reg_rd(3 downto 0) <= polarity;
                 when 16#084#/4 => reg_rd(3 downto 0) <= trap_m_reg;
                 when 16#088#/4 => reg_rd(17 downto 0) <= std_logic_vector(replay_len);
+                when 16#08C#/4 => reg_rd(3 downto 0) <= blr_enable;
+                when 16#0C0#/4 to 16#0CC#/4 =>
+                    reg_rd <= std_logic_vector(blr(word - 16#0C0#/4));
                 when others => null;
             end case;
 

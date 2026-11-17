@@ -45,12 +45,14 @@ def read_hist(path):
 
 
 def regs_from_config(cfg):
-    # polarity and trap_m are missing from runs made before ID v2: reset values.
+    # Fields missing from older runs (polarity, trap_m before ID v2, blr_enable
+    # before v3) take their reset values.
     return dict(conv_gain=cfg["conv_gain"], user_pattern=cfg["user_pattern"],
                 trig_width=cfg["trig_width"], baseline=cfg["baseline"],
                 threshold=[cfg[f"threshold_{ch}"] for ch in range(4)],
                 polarity=cfg.get("polarity", C.DEFAULT_REGS["polarity"]),
-                trap_m=cfg.get("trap_m", C.DEFAULT_REGS["trap_m"]))
+                trap_m=cfg.get("trap_m", C.DEFAULT_REGS["trap_m"]),
+                blr_enable=cfg.get("blr_enable", C.DEFAULT_REGS["blr_enable"]))
 
 
 def compare(run_dir, out=print):
@@ -68,7 +70,7 @@ def compare(run_dir, out=print):
     pulse_set = cfg["config"] & 0xFF
     regs = regs_from_config(cfg)
     source = cfg.get("source", 0)
-    check(cfg["id"] in (C.ID_VALUE, C.ID_V1), f"ID 0x{cfg['id']:08X} (expect 0x{C.ID_VALUE:08X})")
+    check(cfg["id"] in (C.ID_VALUE, C.ID_V2, C.ID_V1), f"ID 0x{cfg['id']:08X} (expect 0x{C.ID_VALUE:08X})")
     check(pulse_set in C.PULSE_SETS and cfg["config"] == C.config_word(pulse_set, regs["trap_m"]),
           f"CONFIG 0x{cfg['config']:08X}: pulse set {pulse_set}, K {cfg['config'] >> 8 & 0xFF}, "
           f"L {cfg['config'] >> 16 & 0xFF}, M {cfg['config'] >> 24} "

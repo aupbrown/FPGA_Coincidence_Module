@@ -31,7 +31,7 @@ import os
 import sys
 
 from . import config as C
-from .dsp import EnergyCapture, TrapFilter, Trigger
+from .dsp import BaselineRestorer, EnergyCapture, TrapFilter, Trigger
 
 BUFFER_WORDS = 1 << 17
 ANODE_OFFSET = 200      # as in scripts/make_replay.py
@@ -135,6 +135,7 @@ class Replay:
         self.trigs = [Trigger() for _ in range(4)]
         self.traps = [TrapFilter(m=r["trap_m"]) for _ in range(4)]
         self.caps = [EnergyCapture() for _ in range(4)]
+        self.blrs = [BaselineRestorer() for _ in range(4)]
         self.coinc = False
         self.hist = [dict() for _ in range(4)]
         self.trig_count = [0] * 4
@@ -177,11 +178,14 @@ class Replay:
         bus = sum(int(t) << ch for ch, t in enumerate(trig))
         self.coinc = bus == r["user_pattern"]
         for ch in range(4):
-            self.caps[ch].step(trig[ch], trap[ch])
+            blr = self.blrs[ch].out if r["blr_enable"] >> ch & 1 else 0
+            self.caps[ch].step(trig[ch], trap[ch], blr)
             if playing:
                 self.traps[ch].step(adc[ch], r["baseline"])
+                self.blrs[ch].step(trig[ch], trap[ch])
             else:
                 self.traps[ch] = TrapFilter(m=r["trap_m"])     # synchronous reset
+                self.blrs[ch] = BaselineRestorer()
             self.trigs[ch].step(adc[ch], r["threshold"][ch], r["trig_width"])
 
     def play(self, words):
@@ -222,7 +226,7 @@ def write_run(pred, outdir):
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "config.csv"), "w") as f:
         f.write("name,value\n")
-        for n in ("conv_gain", "user_pattern", "trig_width", "baseline", "trap_m", "polarity"):
+        for n in ("conv_gain", "user_pattern", "trig_width", "baseline", "trap_m", "polarity", "blr_enable"):
             f.write("%s,%d\n" % (n, r[n]))
         for ch in range(4):
             f.write("threshold_%d,%d\n" % (ch, r["threshold"][ch]))
@@ -272,11 +276,13 @@ def main():
     ap.add_argument("--baseline", type=int)
     ap.add_argument("--trap-m", type=int)
     ap.add_argument("--polarity", type=lambda s: int(s, 0))
+    ap.add_argument("--blr", type=lambda s: int(s, 0), dest="blr_enable", help="BLR_ENABLE bits, e.g. 0b0011")
     ap.add_argument("--out", help="also write the prediction as a run directory")
     a = ap.parse_args()
     regs = dict(REPLAY_REGS, threshold=list(REPLAY_REGS["threshold"]))
     for key, val in (("conv_gain", a.gain), ("user_pattern", a.pattern), ("trig_width", a.trig_width),
-                     ("baseline", a.baseline), ("trap_m", a.trap_m), ("polarity", a.polarity)):
+                     ("baseline", a.baseline), ("trap_m", a.trap_m), ("polarity", a.polarity),
+                     ("blr_enable", a.blr_enable)):
         if val is not None:
             regs[key] = val
     for ch, v in a.threshold or []:

@@ -45,7 +45,8 @@ PS7 ─FCLK_CLK0, reset─▶ │ pulse_gen ─┬▶ polarity ─adc─▶ trig
                         │ (ch0, ch1)              │                   │
                         │            │                   ▼                                   │
                         │            └─▶ trap_filter ─▶ energy_capture ─▶ histogram (x4)     │
-                        │                  ▲ baseline       (peak in window)  ▲ conv_gain   │
+                        │                  ▲ baseline  │    (peak - BLR)     ▲ conv_gain   │
+                        │                              └─▶ baseline_restorer ┘ (BLR_ENABLE) │
 PS7 M_AXI_GP0 ─AXI3─▶ protocol ─AXI4-Lite─▶ axi_lite_slave ─▶ registers + histogram readout │
                   converter              └───────────────────────────────────────────────────┘
 ```
@@ -61,7 +62,8 @@ PS7 M_AXI_GP0 ─AXI3─▶ protocol ─AXI4-Lite─▶ axi_lite_slave ─▶ re
 | `src/replay_source.vhd` | Replay buffer: 128K × 32-bit block RAM the PS loads, played once per run at one word per clock |
 | `src/trigger.vhd`, `src/coincidence.vhd`, `src/detector_top.vhd` | Trigger and coincidence (unchanged, except `detector_top` now outputs the trigger bus) |
 | `src/trap_filter.vhd` | Trapezoidal filter with pole-zero correction and baseline subtraction |
-| `src/energy_capture.vhd` | Peak of the trap output in a window after each trigger; pile-up detection |
+| `src/energy_capture.vhd` | Peak of the trap output in a window after each trigger, minus the BLR when enabled; pile-up detection |
+| `src/baseline_restorer.vhd` | Per channel: mean trap output over 256 quiet clocks (no trigger, \|trap\| ≤ 1024, 176-clock hold) |
 | `src/histogram.vhd` | Block-RAM histogram: read-modify-write per event, clear, PS read port |
 | `src/axi_lite_slave.vhd` | AXI4-Lite protocol → simple register bus |
 | `constraints/board_top.xdc` | Clock constraint only |
@@ -84,7 +86,7 @@ table.
 
 | Offset | Name | | Meaning |
 |---|---|---|---|
-| 0x000 | ID | RO | `0x454E0002` (v1 had no POLARITY/TRAP_M/replay) |
+| 0x000 | ID | RO | `0x454E0003` (v2 had no BLR; v1 had no POLARITY/TRAP_M/replay) |
 | 0x004 | CONFIG | RO | [7:0] pulse set, [15:8] K, [23:16] L, [31:24] TRAP_M register |
 | 0x008 | CONTROL | RW | bit 0 run; bit 1 clear (histograms, counters, trap filters; self-clearing) |
 | 0x00C | STATUS | RO | bit 0 run, bit 1 clear in progress, bit 2 replay playing, bit 3 replay done |
@@ -101,6 +103,8 @@ table.
 | 0x080 | POLARITY | RW | [3:0] bit ch = 1 inverts ch's samples (4095 − x), for negative pulses. Default 0 |
 | 0x084 | TRAP_M | RW | trap pole-zero shift M (τ ≈ 2^M clocks), 0–13. Default 5 (pulse_gen). Clear after changing |
 | 0x088 | REPLAY_LEN | RW | words to play, 1–131072 |
+| 0x08C | BLR_ENABLE | RW | bit ch = 1: subtract channel ch's baseline restorer output from each energy. Default 0 |
+| 0x0C0 + 4·ch | BLR_ch | RO | signed baseline restorer output, trap units (÷ 2^CONV_GAIN for bins); ~0 when BASELINE and TRAP_M are right |
 | 0x1_0000 + 0x4000·ch + 4·bin | HIST | RO | histogram ch, bins 0..4095 |
 | 0x8_0000 + 4·i | REPLAY_BUF | RW | replay word i: [11:0] lane A (ch0), [27:16] lane B (ch1) |
 
@@ -202,8 +206,11 @@ design files (not testbenches) must avoid them:
   offsets. A real anode + cathode ADC will need per-channel baselines.
 - **Cathode ballistic deficit:** cathode rise times (24–47 samples) exceed the trap's flat
   top (L − K = 24), so shallow-depth cathode energies read low. Worth trying a longer L.
-- **Baseline must be exact.** An error of 1 count shifts every energy by K·L/2^M = 56 (≈ 2 bins at gain 5).
-  A real detector needs a baseline-restoration stage; here the baseline is a register.
+- **Baseline error.** An error of 1 count in BASELINE shifts every energy by K·L/2^M trap units:
+  56 (≈ 2 bins) at M = 5, 0.2 at M = 13. The baseline restorer (`BLR_ENABLE`) removes such an
+  offset, and any drift, once its first 256-sample estimate is in; it only corrects offsets
+  within ±1024 trap units (±32 bins). It is done on the trap output, not the ADC input: a
+  gated average of the input follows the preamp tail and makes pulses on a tail read low.
 - **RUN_CLOCKS wraps** after 128.8 s, so `daq_board.py` limits runs to 120 s.
 - **Each trigger window is `trig_width` + 2 clocks** (FSM entry and exit).
 - The heartbeat LED is replaced by the UPTIME register; `daq.py status` twice shows it counting.

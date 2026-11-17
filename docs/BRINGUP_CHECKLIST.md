@@ -80,7 +80,7 @@ Expect, at the end:
 FCLK_CLK0 = 33333333 Hz, enabled
 loaded /tmp/board_top.bit.bin: DONE = 1
 LVL_SHFTR_EN = 0x0000000F, FPGA_RST_CTRL = 0x00000000
-core_top ID = 0x454E0002
+core_top ID = 0x454E0003
 ```
 - `LVL_SHFTR_EN` or `FPGA_RST_CTRL` showing other values is fine: the script prints
   "enabling level shifters and releasing PL resets" and fixes them.

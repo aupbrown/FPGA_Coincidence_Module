@@ -22,7 +22,7 @@ create_project -in_memory -part $part
 # The PS supplies the PL's clock, its reset, and the AXI GP0 master port the
 # PS uses to reach core_top's registers:
 #
-#   ps7 FCLK_CLK0 ----------------------------------------------> FCLK_CLK0 (33.333 MHz)
+#   ps7 FCLK_CLK0 ----------------------------------------------> FCLK_CLK0 (50 MHz)
 #   ps7 FCLK_RESET0_N --> proc_sys_reset --peripheral_aresetn---> PL_RESETN
 #   ps7 M_AXI_GP0 (AXI3) --> axi_protocol_converter --AXI4-Lite--> M_AXI
 #
@@ -30,13 +30,13 @@ create_project -in_memory -part $part
 # bursts); the converter turns the PS's AXI3 transactions into that. M_AXI is
 # mapped at 0x43C0_0000, 1 MB (registers, histograms, and the replay buffer
 # at +0x8_0000). FCLK_CLK0's rate is set at run time by Linux;
-# the 33.333 MHz here only has to match the XDC.
+# the 50 MHz here only has to match the XDC.
 create_bd_design -dir $outdir/bd ps7_stub
 set ps7 [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 ps7]
 set_property -dict [list \
     CONFIG.PCW_USE_M_AXI_GP0             1 \
     CONFIG.PCW_EN_CLK0_PORT              1 \
-    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ  33.333333 \
+    CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ  50 \
     CONFIG.PCW_EN_RST0_PORT              1 \
 ] $ps7
 connect_bd_net [get_bd_pins ps7/FCLK_CLK0] [get_bd_pins ps7/M_AXI_GP0_ACLK]

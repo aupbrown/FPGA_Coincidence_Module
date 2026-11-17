@@ -10,7 +10,7 @@
 #   1. Stop Avnet's web demo and unbind the Linux drivers for the PL
 #      peripherals in Avnet's design. Reconfiguring the PL under a driver that
 #      is still using it hangs the AXI bus and freezes Linux.
-#   2. Set FCLK_CLK0, board_top's clock, to 33.333 MHz and enable it. The rate
+#   2. Set FCLK_CLK0, board_top's clock, to 50 MHz and enable it. The rate
 #      and enable live in the PS, not in the bitstream, and reset at reboot.
 #   3. Write the bitstream to /dev/xdevcfg and check that DONE went high.
 #   4. Make sure the PS-PL AXI path is open (level shifters on, PL reset
@@ -23,7 +23,7 @@
 BIT=${1:-/mnt/board_top.bit.bin}
 DEVCFG=/sys/devices/soc0/amba/f8007000.devcfg
 FCLK=/sys/class/fclk/fclk0
-RATE=33333333                     # IO PLL 1000 MHz / 30
+RATE=50000000                     # IO PLL 1000 MHz / 20
 
 fail() { echo "ERROR: $*"; exit 1; }
 
@@ -52,8 +52,10 @@ done
 [ -d $FCLK ] || echo fclk0 > $DEVCFG/fclk_export
 echo $RATE > $FCLK/set_rate
 echo 1 > $FCLK/enable
-[ "$(cat $FCLK/set_rate)" = "$RATE" ] || fail "FCLK_CLK0 is $(cat $FCLK/set_rate) Hz, not $RATE"
-echo "FCLK_CLK0 = $RATE Hz, enabled"
+GOT=$(cat $FCLK/set_rate)                 # the kernel may round, e.g. 99999999
+DIFF=$((GOT - RATE)); [ $DIFF -lt 0 ] && DIFF=$((-DIFF))
+[ $DIFF -le $((RATE / 1000)) ] || fail "FCLK_CLK0 is $GOT Hz, not $RATE"
+echo "FCLK_CLK0 = $GOT Hz, enabled"
 
 # --- 3. Load -----------------------------------------------------------------
 rm -f /tmp/board_top.loaded               # stale marker from an earlier load

@@ -77,7 +77,7 @@ python3 scripts/serial_load.py build/board_top_set1.bit.bin
 ```
 Expect, at the end:
 ```
-FCLK_CLK0 = 33333333 Hz, enabled
+FCLK_CLK0 = 50000000 Hz, enabled
 loaded /tmp/board_top.bit.bin: DONE = 1
 LVL_SHFTR_EN = 0x0000000F, FPGA_RST_CTRL = 0x00000000
 core_top ID = 0x454E0003

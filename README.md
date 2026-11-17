@@ -29,7 +29,7 @@ At the board: follow `docs/BRINGUP_CHECKLIST.md`.
 | FPGA | Zynq-7000 XC7Z030 on a PicoZed SOM |
 | Carrier | Avnet FMC Carrier V2 |
 | OS on the PS | Avnet's PetaLinux 2017.4 out-of-box image (SD card) |
-| Clock | 33.333 MHz (30 ns) `FCLK_CLK0` from the PS, set by Linux. The carrier has no working PL clock on Y18 |
+| Clock | 50 MHz (20 ns) `FCLK_CLK0` from the PS, set by Linux. The carrier has no working PL clock on Y18 |
 | PS ↔ PL | AXI GP0 → AXI4-Lite registers at `0x43C0_0000` (128 KB) |
 | Host ↔ PS | USB-UART console, 115200 baud (`/dev/ttyUSB0`) |
 | Synthesis | Vivado 2022.2 (VHDL-93) |
@@ -91,7 +91,7 @@ table.
 | 0x008 | CONTROL | RW | bit 0 run; bit 1 clear (histograms, counters, trap filters; self-clearing) |
 | 0x00C | STATUS | RO | bit 0 run, bit 1 clear in progress, bit 2 replay playing, bit 3 replay done |
 | 0x010 | UPTIME | RO | clocks since reset |
-| 0x014 | RUN_CLOCKS | RO | clocks with run = 1 since clear (wraps at 128.8 s) |
+| 0x014 | RUN_CLOCKS | RO | clocks with run = 1 since clear (wraps at 85.9 s) |
 | 0x018 | CONV_GAIN | RW | bin = energy >> CONV_GAIN. Default 5 |
 | 0x01C | USER_PATTERN | RW | coincidence pattern. Default `0011` |
 | 0x020 | TRIG_WIDTH | RW | trigger window Δt, clocks. Default 50 |
@@ -211,6 +211,6 @@ design files (not testbenches) must avoid them:
   offset, and any drift, once its first 256-sample estimate is in; it only corrects offsets
   within ±1024 trap units (±32 bins). It is done on the trap output, not the ADC input: a
   gated average of the input follows the preamp tail and makes pulses on a tail read low.
-- **RUN_CLOCKS wraps** after 128.8 s, so `daq_board.py` limits runs to 120 s.
+- **RUN_CLOCKS wraps** after 85.9 s, so `daq_board.py` limits runs to 80 s.
 - **Each trigger window is `trig_width` + 2 clocks** (FSM entry and exit).
 - The heartbeat LED is replaced by the UPTIME register; `daq.py status` twice shows it counting.

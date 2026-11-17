@@ -47,8 +47,8 @@ except ImportError:          # Avnet's image ships python3 without the mmap modu
 BASE = 0x43C00000
 SIZE = 0x100000           # registers, histograms, replay buffer
 ID_VALUE = 0x454E0003
-CLOCK_HZ = 33333333
-MAX_SECONDS = 120          # RUN_CLOCKS is 32 bits: wraps after 128.8 s
+CLOCK_HZ = 50000000
+MAX_SECONDS = 80           # RUN_CLOCKS is 32 bits: wraps after 85.9 s
 
 REG = {
     "id": 0x000, "config": 0x004, "control": 0x008, "status": 0x00C,
@@ -242,7 +242,7 @@ def main(argv):
             fail("SOURCE is 1 (replay): use replay, or set source 0 first")
         seconds = float(args[0])
         if not 0 < seconds <= MAX_SECONDS:
-            fail("run length must be 0-%d s (RUN_CLOCKS wraps at 128.8 s)" % MAX_SECONDS)
+            fail("run length must be 0-%d s (RUN_CLOCKS wraps at 85.9 s)" % MAX_SECONDS)
         core.clear()
         core.start()
         time.sleep(seconds)

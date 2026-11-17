@@ -21,7 +21,7 @@ use work.pulse_config_pkg.all;
 --                          (self-clearing, reads 0)
 --   0x00C STATUS       RO  bit 0 run, bit 1 clear in progress,
 --                          bit 2 replay playing, bit 3 replay done
---   0x010 UPTIME       RO  clocks since reset (wraps every 129 s)
+--   0x010 UPTIME       RO  clocks since reset (wraps every 86 s)
 --   0x014 RUN_CLOCKS   RO  clocks spent with run = 1 since the last clear
 --   0x018 CONV_GAIN    RW  [3:0] bin = energy >> CONV_GAIN.            Default 5
 --   0x01C USER_PATTERN RW  [3:0] coincidence pattern.                 Default 0011
